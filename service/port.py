@@ -58,12 +58,14 @@ class Port(object):
         nested_dict = lambda: collections.defaultdict(nested_dict)
         fit = nested_dict()
         sCrest = service.Crest.getInstance()
+        sFit = service.Fit.getInstance()
+
         eve = sCrest.eve
 
         # max length is 50 characters
         name = ofit.name[:47] + '...' if len(ofit.name) > 50 else ofit.name
         fit['name'] = name
-        fit['ship']['href'] = "%stypes/%d/"%(eve._authed_endpoint, ofit.ship.item.ID)
+        fit['ship']['href'] = "%sinventory/types/%d/"%(eve._authed_endpoint, ofit.ship.item.ID)
         fit['ship']['id'] = ofit.ship.item.ID
         fit['ship']['name'] = ''
 
@@ -71,6 +73,7 @@ class Port(object):
         fit['items'] = []
 
         slotNum = {}
+        charges = {}
         for module in ofit.modules:
             if module.isEmpty:
                 continue
@@ -90,25 +93,40 @@ class Port(object):
                 slotNum[slot] += 1
 
             item['quantity'] = 1
-            item['type']['href'] = "%stypes/%d/"%(eve._authed_endpoint, module.item.ID)
+            item['type']['href'] = "%sinventory/types/%d/"%(eve._authed_endpoint, module.item.ID)
             item['type']['id'] = module.item.ID
             item['type']['name'] = ''
             fit['items'].append(item)
+
+            if module.charge and sFit.serviceFittingOptions["exportCharges"]:
+                if not module.chargeID in charges:
+                    charges[module.chargeID] = 0
+                # `or 1` because some charges (ie scripts) are without qty
+                charges[module.chargeID] += module.numCharges or 1
 
         for cargo in ofit.cargo:
             item = nested_dict()
             item['flag'] = INV_FLAG_CARGOBAY
             item['quantity'] = cargo.amount
-            item['type']['href'] = "%stypes/%d/"%(eve._authed_endpoint, cargo.item.ID)
+            item['type']['href'] = "%sinventory/types/%d/"%(eve._authed_endpoint, cargo.item.ID)
             item['type']['id'] = cargo.item.ID
             item['type']['name'] = ''
             fit['items'].append(item)
-        
+
+        for chargeID, amount in charges.items():
+            item = nested_dict()
+            item['flag'] = INV_FLAG_CARGOBAY
+            item['quantity'] = amount
+            item['type']['href'] = "%sinventory/types/%d/"%(eve._authed_endpoint, chargeID)
+            item['type']['id'] = chargeID
+            item['type']['name'] = ''
+            fit['items'].append(item)
+
         for drone in ofit.drones:
             item = nested_dict()
             item['flag'] = INV_FLAG_DRONEBAY
             item['quantity'] = drone.amount
-            item['type']['href'] = "%stypes/%d/"%(eve._authed_endpoint, drone.item.ID)
+            item['type']['href'] = "%sinventory/types/%d/"%(eve._authed_endpoint, drone.item.ID)
             item['type']['id'] = drone.item.ID
             item['type']['name'] = ''
             fit['items'].append(item)
@@ -128,7 +146,7 @@ class Port(object):
             else:
                 return "XML", cls.importXml(string, callback)
 
-        # If JSON-style start, parse os CREST/JSON
+        # If JSON-style start, parse as CREST/JSON
         if firstLine[0] == '{':
             return "JSON", (cls.importCrest(string),)
 
@@ -162,6 +180,8 @@ class Port(object):
 
         items = fit['items']
         items.sort(key=lambda k: k['flag'])
+
+        moduleList = []
         for module in items:
             try:
                 item = sMkt.getItem(module['type']['id'], eager="group.category")
@@ -179,21 +199,41 @@ class Port(object):
                     # When item can't be added to any slot (unknown item or just charge), ignore it
                     except ValueError:
                         continue
-                    if m.fits(f):
-                        m.owner = f
+                    # Add subsystems before modules to make sure T3 cruisers have subsystems installed
+                    if item.category.name == "Subsystem":
+                        if m.fits(f):
+                            f.modules.append(m)
+                    else:
                         if m.isValidState(State.ACTIVE):
                             m.state = State.ACTIVE
 
-                        f.modules.append(m)
+                        moduleList.append(m)
 
             except:
                 continue
+
+        # Recalc to get slot numbers correct for T3 cruisers
+        service.Fit.getInstance().recalc(f)
+
+        for module in moduleList:
+            if module.fits(f):
+                f.modules.append(module)
 
         return f
 
     @staticmethod
     def importDna(string):
         sMkt = service.Market.getInstance()
+
+        ids = map(int, re.findall(r'\d+', string))
+        for id in ids:
+            try:
+                Ship(sMkt.getItem(id))
+                string = string[string.index(str(id)):]
+                break
+            except:
+                pass
+        string = string[:string.index("::") + 2]
         info = string.split(":")
 
         f = Fit()
@@ -208,6 +248,7 @@ class Port(object):
             logger.exception("Couldn't import ship data %r", [ logtransform(s) for s in info ])
             return None
 
+        moduleList = []
         for itemInfo in info[1:]:
             if itemInfo:
                 itemID, amount = itemInfo.split(";")
@@ -225,13 +266,27 @@ class Port(object):
                     for i in xrange(int(amount)):
                         try:
                             m = Module(item)
+                        except:
+                            continue
+                        # Add subsystems before modules to make sure T3 cruisers have subsystems installed
+                        if item.category.name == "Subsystem":
                             if m.fits(f):
                                 f.modules.append(m)
-                        except:
-                            pass
-                        m.owner = f
-                        if m.isValidState(State.ACTIVE):
-                            m.state = State.ACTIVE
+                        else:
+                            m.owner = f
+                            if m.isValidState(State.ACTIVE):
+                                m.state = State.ACTIVE
+                            moduleList.append(m)
+
+        # Recalc to get slot numbers correct for T3 cruisers
+        service.Fit.getInstance().recalc(f)
+
+        for module in moduleList:
+            if module.fits(f):
+                module.owner = f
+                if module.isValidState(State.ACTIVE):
+                    module.state = State.ACTIVE
+                f.modules.append(module)
 
         return f
 
@@ -262,6 +317,7 @@ class Port(object):
         # maintain map of drones and their quantities
         droneMap = {}
         cargoMap = {}
+        moduleList = []
         for i in range(1, len(lines)):
             ammoName = None
             extraAmount = None
@@ -310,28 +366,49 @@ class Port(object):
                 cargoMap[modName] += extraAmount
             elif item.category.name == "Implant":
                 fit.implants.append(Implant(item))
+            # elif item.category.name == "Subsystem":
+            #     try:
+            #         subsystem = Module(item)
+            #     except ValueError:
+            #         continue
+            #
+            #     if subsystem.fits(fit):
+            #         fit.modules.append(subsystem)
             else:
                 try:
                     m = Module(item)
                 except ValueError:
                     continue
-                if ammoName:
-                    try:
-                        ammo = sMkt.getItem(ammoName)
-                        if m.isValidCharge(ammo) and m.charge is None:
-                            m.charge = ammo
-                    except:
-                        pass
+                # Add subsystems before modules to make sure T3 cruisers have subsystems installed
+                if item.category.name == "Subsystem":
+                    if m.fits(fit):
+                        fit.modules.append(m)
+                else:
+                    if ammoName:
+                        try:
+                            ammo = sMkt.getItem(ammoName)
+                            if m.isValidCharge(ammo) and m.charge is None:
+                                m.charge = ammo
+                        except:
+                            pass
 
-                if m.fits(fit):
-                    m.owner = fit
                     if setOffline is True and m.isValidState(State.OFFLINE):
                         m.state = State.OFFLINE
                     elif m.isValidState(State.ACTIVE):
                         m.state = State.ACTIVE
 
-                    fit.modules.append(m)
+                    moduleList.append(m)
 
+        # Recalc to get slot numbers correct for T3 cruisers
+        service.Fit.getInstance().recalc(fit)
+
+        for m in moduleList:
+            if m.fits(fit):
+                m.owner = fit
+                if not m.isValidState(m.state):
+                    print "Error: Module", m, "cannot have state", m.state
+
+                fit.modules.append(m)
 
         for droneName in droneMap:
             d = Drone(sMkt.getItem(droneName))
@@ -388,6 +465,7 @@ class Port(object):
                 # Assign ship to fitting
                 f.ship = Ship(sMkt.getItem(shipname))
 
+                moduleList = []
                 for x in range(1, len(fitLines)):
                     line = fitLines[x]
                     if not line:
@@ -476,22 +554,35 @@ class Port(object):
                         except:
                             continue
 
-                        # Create module and activate it if it's activable
+                        # Create module
                         m = Module(modItem)
-                        m.owner = f
-                        if m.isValidState(State.ACTIVE):
-                            m.state = State.ACTIVE
-                        # Add charge to mod if applicable, on any errors just don't add anything
-                        if chargeName:
-                            try:
-                                chargeItem = sMkt.getItem(chargeName, eager="group.category")
-                                if chargeItem.category.name == "Charge":
-                                    m.charge = chargeItem
-                            except:
-                                pass
-                        # Append module to fit
-                        if m.fits(f):
-                            f.modules.append(m)
+
+                        # Add subsystems before modules to make sure T3 cruisers have subsystems installed
+                        if modItem.category.name == "Subsystem":
+                            if m.fits(f):
+                                f.modules.append(m)
+                        else:
+                            m.owner = f
+                            # Activate mod if it is activable
+                            if m.isValidState(State.ACTIVE):
+                                m.state = State.ACTIVE
+                            # Add charge to mod if applicable, on any errors just don't add anything
+                            if chargeName:
+                                try:
+                                    chargeItem = sMkt.getItem(chargeName, eager="group.category")
+                                    if chargeItem.category.name == "Charge":
+                                        m.charge = chargeItem
+                                except:
+                                    pass
+                            # Append module to fit
+                            moduleList.append(m)
+
+                # Recalc to get slot numbers correct for T3 cruisers
+                service.Fit.getInstance().recalc(f)
+
+                for module in moduleList:
+                    if module.fits(f):
+                        f.modules.append(module)
 
                 # Append fit to list of fits
                 fits.append(f)
@@ -523,6 +614,7 @@ class Port(object):
             except:
                 continue
             hardwares = fitting.getElementsByTagName("hardware")
+            moduleList = []
             for hardware in hardwares:
                 try:
                     moduleName = hardware.getAttribute("type")
@@ -548,15 +640,27 @@ class Port(object):
                             # When item can't be added to any slot (unknown item or just charge), ignore it
                             except ValueError:
                                 continue
-                            if m.fits(f):
-                                m.owner = f
+                            # Add subsystems before modules to make sure T3 cruisers have subsystems installed
+                            if item.category.name == "Subsystem":
+                                if m.fits(f):
+                                    m.owner = f
+                                    f.modules.append(m)
+                            else:
                                 if m.isValidState(State.ACTIVE):
                                     m.state = State.ACTIVE
 
-                                f.modules.append(m)
+                                moduleList.append(m)
 
                 except KeyboardInterrupt:
                     continue
+
+            # Recalc to get slot numbers correct for T3 cruisers
+            service.Fit.getInstance().recalc(f)
+
+            for module in moduleList:
+                if module.fits(f):
+                    module.owner = f
+                    f.modules.append(module)
 
             fits.append(f)
             if callback:
@@ -707,7 +811,7 @@ class Port(object):
 
                     if slot == Slot.SUBSYSTEM:
                         # Order of subsystem matters based on this attr. See GH issue #130
-                        slotId = module.getModifiedItemAttr("subSystemSlot") - 124
+                        slotId = module.getModifiedItemAttr("subSystemSlot") - 125
                     else:
                         if not slot in slotNum:
                             slotNum[slot] = 0

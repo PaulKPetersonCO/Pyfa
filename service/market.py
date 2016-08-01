@@ -26,14 +26,18 @@ import Queue
 import config
 import eos.db
 import eos.types
+from sqlalchemy.sql import and_, or_
 from service.settings import SettingsProvider, NetworkSettings
 import service
 import service.conversions as conversions
+import logging
 
 try:
     from collections import OrderedDict
 except ImportError:
     from utils.compat import OrderedDict
+
+logger = logging.getLogger(__name__)
 
 # Event which tells threads dependent on Market that it's initialized
 mktRdy = threading.Event()
@@ -120,11 +124,14 @@ class SearchWorkerThread(threading.Thread):
             self.searchRequest = None
             cv.release()
             sMkt = Market.getInstance()
-            if filterOn:
+            if filterOn is True:
                 # Rely on category data provided by eos as we don't hardcode them much in service
-                filter = eos.types.Category.name.in_(sMkt.SEARCH_CATEGORIES)
+                filter = or_(eos.types.Category.name.in_(sMkt.SEARCH_CATEGORIES), eos.types.Group.name.in_(sMkt.SEARCH_GROUPS))
+            elif filterOn:  # filter by selected categories
+                filter = eos.types.Category.name.in_(filterOn)
             else:
                 filter=None
+
             results = eos.db.searchItems(request, where=filter,
                                          join=(eos.types.Item.group, eos.types.Group.category),
                                          eager=("icon", "group.category", "metaGroup", "metaGroup.parent"))
@@ -308,9 +315,15 @@ class Market():
             "Standard Cerebral Accelerator": 977, # Implants & Boosters > Booster
             "Talocan Data Analyzer I": 714, # Ship Equipment > Electronics and Sensor Upgrades > Scanners > Data and Composition Scanners
             "Terran Data Analyzer I": 714, # Ship Equipment > Electronics and Sensor Upgrades > Scanners > Data and Composition Scanners
-            "Tetrimon Data Analyzer I": 714 } # Ship Equipment > Electronics and Sensor Upgrades > Scanners > Data and Composition Scanners
+            "Tetrimon Data Analyzer I": 714  # Ship Equipment > Electronics and Sensor Upgrades > Scanners > Data and Composition Scanners
+        }
 
         self.ITEMS_FORCEDMARKETGROUP_R = self.__makeRevDict(self.ITEMS_FORCEDMARKETGROUP)
+
+        self.FORCEDMARKETGROUP = {
+            685: False, # Ship Equipment > Electronic Warfare > ECCM
+            681: False, # Ship Equipment > Electronic Warfare > Sensor Backup Arrays
+        }
 
         # Misc definitions
         # 0 is for items w/o meta group
@@ -318,7 +331,8 @@ class Market():
                                      ("faction", frozenset((4, 3))),
                                      ("complex", frozenset((6,))),
                                      ("officer", frozenset((5,)))])
-        self.SEARCH_CATEGORIES = ("Drone", "Module", "Subsystem", "Charge", "Implant", "Deployable")
+        self.SEARCH_CATEGORIES = ("Drone", "Module", "Subsystem", "Charge", "Implant", "Deployable", "Fighter")
+        self.SEARCH_GROUPS = ("Ice Product",)
         self.ROOT_MARKET_GROUPS = (9,     # Modules
                                    1111,  # Rigs
                                    157,   # Drones
@@ -346,20 +360,25 @@ class Market():
 
     def getItem(self, identity, *args, **kwargs):
         """Get item by its ID or name"""
-        if isinstance(identity, eos.types.Item):
-            item = identity
-        elif isinstance(identity, int):
-            item = eos.db.getItem(identity, *args, **kwargs)
-        elif isinstance(identity, basestring):
-            # We normally lookup with string when we are using import/export
-            # features. Check against overrides
-            identity = conversions.all.get(identity, identity)
-            item = eos.db.getItem(identity, *args, **kwargs)
-        elif isinstance(identity, float):
-            id = int(identity)
-            item = eos.db.getItem(id, *args, **kwargs)
-        else:
-            raise TypeError("Need Item object, integer, float or string as argument")
+        try:
+            if isinstance(identity, eos.types.Item):
+                item = identity
+            elif isinstance(identity, int):
+                item = eos.db.getItem(identity, *args, **kwargs)
+            elif isinstance(identity, basestring):
+                # We normally lookup with string when we are using import/export
+                # features. Check against overrides
+                identity = conversions.all.get(identity, identity)
+                item = eos.db.getItem(identity, *args, **kwargs)
+            elif isinstance(identity, float):
+                id = int(identity)
+                item = eos.db.getItem(id, *args, **kwargs)
+            else:
+                raise TypeError("Need Item object, integer, float or string as argument")
+        except:
+            logger.error("Could not get item: %s", identity)
+            raise
+
         return item
 
     def getGroup(self, identity, *args, **kwargs):
@@ -583,6 +602,8 @@ class Market():
         """Check market group validity"""
         # The only known case when group can be invalid is
         # when it's declared to have types, but it doesn't contain anything
+        if mg.ID in self.FORCEDMARKETGROUP:
+            return self.FORCEDMARKETGROUP[mg.ID]
         if mg.hasTypes and not self.marketGroupHasTypesCheck(mg):
             return False
         else:
@@ -736,7 +757,7 @@ class Market():
         def cb():
             try:
                 callback(requests)
-            except:
+            except Exception, e:
                 pass
             eos.db.commit()
 

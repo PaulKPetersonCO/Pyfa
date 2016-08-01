@@ -51,6 +51,7 @@ class Effect(EqBase):
         Reconstructor, composes the object as we grab it from the database
         '''
         self.__generated = False
+        self.__effectModule = None
         self.handlerName = re.sub(self.nameFilter, "", self.name).lower()
 
     @property
@@ -153,6 +154,7 @@ class Effect(EqBase):
             self.__generateHandler()
 
         return getattr(self.__effectModule, key, None)
+
 
 def effectDummy(*args, **kwargs):
     pass
@@ -400,7 +402,10 @@ class Icon(EqBase):
     pass
 
 class MarketGroup(EqBase):
-    pass
+    def __repr__(self):
+        return u"MarketGroup(ID={}, name={}, parent={}) at {}".format(
+            self.ID, self.name, getattr(self.parent, "name", None), self.name, hex(id(self))
+        ).encode('utf8')
 
 class MetaGroup(EqBase):
     pass

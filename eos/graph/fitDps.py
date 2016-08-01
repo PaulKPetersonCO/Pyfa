@@ -40,11 +40,14 @@ class FitDpsGraph(Graph):
 
         for mod in fit.modules:
             if not mod.isEmpty and mod.state >= State.ACTIVE:
-                if "ewTargetPaint" in mod.item.effects:
-                    ew['signatureRadius'].append(1+(mod.getModifiedItemAttr("signatureRadiusBonus") / 100))
-                if "decreaseTargetSpeed" in mod.item.effects:
+                if "remoteTargetPaintFalloff" in mod.item.effects:
+                    ew['signatureRadius'].append(1+(mod.getModifiedItemAttr("signatureRadiusBonus") / 100) * self.calculateModuleMultiplier(mod, data))
+                if "remoteWebifierFalloff" in mod.item.effects:
                     if distance <= mod.getModifiedItemAttr("maxRange"):
                         ew['velocity'].append(1+(mod.getModifiedItemAttr("speedFactor") / 100))
+                    elif mod.getModifiedItemAttr("falloffEffectiveness") > 0:
+                        #I am affected by falloff
+                        ew['velocity'].append(1+(mod.getModifiedItemAttr("speedFactor") / 100) * self.calculateModuleMultiplier(mod, data))
 
         ew['signatureRadius'].sort(key=abssort)
         ew['velocity'].sort(key=abssort)
@@ -71,9 +74,18 @@ class FitDpsGraph(Graph):
 
         if distance <= fit.extraAttributes["droneControlRange"]:
             for drone in fit.drones:
-                multiplier = 1 if drone.getModifiedItemAttr("maxVelocity") > 0 else self.calculateTurretMultiplier(drone, data)
+                multiplier = 1 if drone.getModifiedItemAttr("maxVelocity") > 1 else self.calculateTurretMultiplier(drone, data)
                 dps, _ =  drone.damageStats(fit.targetResists)
                 total += dps * multiplier
+
+        # this is janky as fuck
+        for fighter in fit.fighters:
+            for ability in fighter.abilities:
+                if ability.dealsDamage and ability.active:
+                    multiplier = self.calculateFighterMissileMultiplier(ability, data)
+                    dps, _ = ability.damageStats(fit.targetResists)
+                    total += dps * multiplier
+
         return total
 
     def calculateMissileMultiplier(self, mod, data):
@@ -83,11 +95,10 @@ class FitDpsGraph(Graph):
         targetSigRad = explosionRadius if targetSigRad is None else targetSigRad
         explosionVelocity = mod.getModifiedChargeAttr("aoeVelocity")
         damageReductionFactor = mod.getModifiedChargeAttr("aoeDamageReductionFactor")
-        damageReductionSensitivity = mod.getModifiedChargeAttr("aoeDamageReductionSensitivity")
 
         sigRadiusFactor = targetSigRad / explosionRadius
         if targetVelocity:
-            velocityFactor = (explosionVelocity / explosionRadius * targetSigRad / targetVelocity) ** (log(damageReductionFactor) / log(damageReductionSensitivity))
+            velocityFactor = (explosionVelocity / explosionRadius * targetSigRad / targetVelocity) ** damageReductionFactor
         else:
             velocityFactor = 1
 
@@ -108,6 +119,35 @@ class FitDpsGraph(Graph):
             multiplier = min(1, (float(targetSigRad) / dmgScaling) ** 2)
         return multiplier
 
+    def calculateFighterMissileMultiplier(self, ability, data):
+        prefix = ability.attrPrefix
+
+        targetSigRad = data["signatureRadius"]
+        targetVelocity = data["velocity"]
+        explosionRadius = ability.fighter.getModifiedItemAttr("{}ExplosionRadius".format(prefix))
+        explosionVelocity = ability.fighter.getModifiedItemAttr("{}ExplosionVelocity".format(prefix))
+        damageReductionFactor = ability.fighter.getModifiedItemAttr("{}ReductionFactor".format(prefix))
+
+        # the following conditionals are because CCP can't keep a decent naming convention, as if fighter implementation
+        # wasn't already fucked.
+        if damageReductionFactor is None:
+            damageReductionFactor = ability.fighter.getModifiedItemAttr("{}DamageReductionFactor".format(prefix))
+
+        damageReductionSensitivity = ability.fighter.getModifiedItemAttr("{}ReductionSensitivity".format(prefix))
+        if damageReductionSensitivity is None:
+            damageReductionSensitivity = ability.fighter.getModifiedItemAttr("{}DamageReductionSensitivity".format(prefix))
+
+        targetSigRad = explosionRadius if targetSigRad is None else targetSigRad
+        sigRadiusFactor = targetSigRad / explosionRadius
+
+        if targetVelocity:
+            velocityFactor = (explosionVelocity / explosionRadius * targetSigRad / targetVelocity) ** (
+            log(damageReductionFactor) / log(damageReductionSensitivity))
+        else:
+            velocityFactor = 1
+
+        return min(sigRadiusFactor, velocityFactor, 1)
+
     def calculateTurretChanceToHit(self, mod, data):
         distance = data["distance"] * 1000
         tracking = mod.getModifiedItemAttr("trackingSpeed")
@@ -122,3 +162,13 @@ class FitDpsGraph(Graph):
         rangeEq = ((max(0, distance - turretOptimal)) / turretFalloff) ** 2
 
         return 0.5 ** (trackingEq + rangeEq)
+
+    def calculateModuleMultiplier(self, mod, data):
+        #Simplified formula, we make some assumptions about the module
+        #This is basically the calculateTurretChanceToHit without tracking values
+        distance = data["distance"] * 1000
+        turretOptimal = mod.maxRange
+        turretFalloff = mod.falloff
+        rangeEq = ((max(0, distance - turretOptimal)) / turretFalloff) ** 2
+
+        return 0.5 ** (rangeEq)

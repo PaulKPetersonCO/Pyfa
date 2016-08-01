@@ -31,6 +31,8 @@ import eos.db
 import time
 import copy
 from utils.timer import Timer
+from eos.enum import Enum
+
 
 import logging
 
@@ -41,6 +43,10 @@ try:
 except ImportError:
     from utils.compat import OrderedDict
 
+class ImplantLocation(Enum):
+    FIT = 0
+    CHARACTER = 1
+
 class Fit(object):
     """Represents a fitting, with modules, ship, implants, etc."""
 
@@ -50,15 +56,19 @@ class Fit(object):
         """Initialize a fit from the program"""
         # use @mode.setter's to set __attr and IDs. This will set mode as well
         self.ship = ship
+        if self.ship:
+            self.ship.parent = self
 
         self.__modules = HandledModuleList()
         self.__drones = HandledDroneCargoList()
+        self.__fighters = HandledDroneCargoList()
         self.__cargo = HandledDroneCargoList()
         self.__implants = HandledImplantBoosterList()
         self.__boosters = HandledImplantBoosterList()
         #self.__projectedFits = {}
         self.__projectedModules = HandledProjectedModList()
         self.__projectedDrones = HandledProjectedDroneList()
+        self.__projectedFighters = HandledProjectedDroneList()
         self.__character = None
         self.__owner = None
 
@@ -82,7 +92,7 @@ class Fit(object):
                 return
 
             try:
-                self.__ship = Ship(item)
+                self.__ship = Ship(item, self)
                 # @todo extra attributes is now useless, however it set to be
                 # the same as ship attributes for ease (so we don't have to
                 # change all instances in source). Remove this at some point
@@ -186,6 +196,10 @@ class Fit(object):
         return self.__drones
 
     @property
+    def fighters(self):
+        return self.__fighters
+
+    @property
     def cargo(self):
         return self.__cargo
 
@@ -217,6 +231,10 @@ class Fit(object):
     @property
     def projectedDrones(self):
         return self.__projectedDrones
+
+    @property
+    def projectedFighters(self):
+        return self.__projectedFighters
 
     @property
     def weaponDPS(self):
@@ -319,16 +337,19 @@ class Fit(object):
         return -log(0.25) * agility * mass / 1000000
 
     @property
+    def implantSource(self):
+        return self.implantLocation
+
+    @implantSource.setter
+    def implantSource(self, source):
+        self.implantLocation = source
+
+    @property
     def appliedImplants(self):
-        implantsBySlot = {}
-        if self.character:
-            for implant in self.character.implants:
-                implantsBySlot[implant.slot] = implant
-
-        for implant in self.implants:
-            implantsBySlot[implant.slot] = implant
-
-        return implantsBySlot.values()
+        if self.implantLocation == ImplantLocation.CHARACTER:
+            return self.character.implants
+        else:
+            return self.implants
 
     @validates("ID", "ownerID", "shipID")
     def validator(self, key, val):
@@ -365,10 +386,12 @@ class Fit(object):
         c = chain(
             self.modules,
             self.drones,
+            self.fighters,
             self.boosters,
             self.implants,
             self.projectedDrones,
             self.projectedModules,
+            self.projectedFighters,
             (self.character, self.extraAttributes),
         )
 
@@ -447,6 +470,7 @@ class Fit(object):
         if self.fleet is not None and withBoosters is True:
             logger.debug("Fleet is set, gathering gang boosts")
             self.gangBoosts = self.fleet.recalculateLinear(withBoosters=withBoosters)
+
             timer.checkpoint("Done calculating gang boosts for %r"%self)
         elif self.fleet is None:
             self.gangBoosts = None
@@ -482,6 +506,7 @@ class Fit(object):
             u = [
                 (self.character, self.ship),
                 self.drones,
+                self.fighters,
                 self.boosters,
                 self.appliedImplants,
                 self.modules
@@ -489,7 +514,7 @@ class Fit(object):
 
             # Items that are restricted. These items are only run on the local
             # fit. They are NOT projected onto the target fit. # See issue 354
-            r = [(self.mode,), self.projectedDrones, self.projectedModules]
+            r = [(self.mode,), self.projectedDrones, self.projectedFighters, self.projectedModules]
 
             # chain unrestricted and restricted into one iterable
             c = chain.from_iterable(u+r)
@@ -600,26 +625,35 @@ class Fit(object):
 
     def getSlotsUsed(self, type, countDummies=False):
         amount = 0
-        for mod in self.modules:
-            if mod.slot is type and (not mod.isEmpty or countDummies):
+
+        for mod in chain(self.modules, self.fighters):
+            if mod.slot is type and (not getattr(mod, "isEmpty", False) or countDummies):
+                if type in (Slot.F_HEAVY, Slot.F_SUPPORT, Slot.F_LIGHT) and not mod.active:
+                    continue
                 amount += 1
 
         return amount
 
-    def getSlotsFree(self, type, countDummies=False):
-        slots = {Slot.LOW: "lowSlots",
-                 Slot.MED: "medSlots",
-                 Slot.HIGH: "hiSlots",
-                 Slot.RIG: "rigSlots",
-                 Slot.SUBSYSTEM: "maxSubSystems"}
+    slots = {Slot.LOW: "lowSlots",
+             Slot.MED: "medSlots",
+             Slot.HIGH: "hiSlots",
+             Slot.RIG: "rigSlots",
+             Slot.SUBSYSTEM: "maxSubSystems",
+             Slot.F_LIGHT: "fighterLightSlots",
+             Slot.F_SUPPORT: "fighterSupportSlots",
+             Slot.F_HEAVY: "fighterHeavySlots"}
 
+    def getSlotsFree(self, type, countDummies=False):
         if type in (Slot.MODE, Slot.SYSTEM):
             # These slots don't really exist, return default 0
             return 0
 
         slotsUsed = self.getSlotsUsed(type, countDummies)
-        totalSlots = self.ship.getModifiedItemAttr(slots[type]) or 0
+        totalSlots = self.ship.getModifiedItemAttr(self.slots[type]) or 0
         return int(totalSlots - slotsUsed)
+
+    def getNumSlots(self, type):
+        return self.ship.getModifiedItemAttr(self.slots[type]) or 0
 
     @property
     def calibrationUsed(self):
@@ -646,6 +680,23 @@ class Fit(object):
         amount = 0
         for d in self.drones:
             amount += d.item.volume * d.amount
+
+        return amount
+
+    @property
+    def fighterBayUsed(self):
+        amount = 0
+        for f in self.fighters:
+            amount += f.item.volume * f.amountActive
+
+        return amount
+
+    @property
+    def fighterTubesUsed(self):
+        amount = 0
+        for f in self.fighters:
+            if f.active:
+                amount += 1
 
         return amount
 
@@ -747,20 +798,20 @@ class Fit(object):
                 repairers = []
                 #Map a repairer type to the attribute it uses
                 groupAttrMap = {"Armor Repair Unit": "armorDamageAmount",
-                     "Fueled Armor Repairer": "armorDamageAmount",
+                     "Ancillary Armor Repairer": "armorDamageAmount",
                      "Hull Repair Unit": "structureDamageAmount",
                      "Shield Booster": "shieldBonus",
-                     "Fueled Shield Booster": "shieldBonus",
+                     "Ancillary Shield Booster": "shieldBonus",
                      "Remote Armor Repairer": "armorDamageAmount",
                      "Remote Shield Booster": "shieldBonus"}
                 #Map repairer type to attribute
                 groupStoreMap = {"Armor Repair Unit": "armorRepair",
                                  "Hull Repair Unit": "hullRepair",
                                  "Shield Booster": "shieldRepair",
-                                 "Fueled Shield Booster": "shieldRepair",
+                                 "Ancillary Shield Booster": "shieldRepair",
                                  "Remote Armor Repairer": "armorRepair",
                                  "Remote Shield Booster": "shieldRepair",
-                                 "Fueled Armor Repairer": "armorRepair",}
+                                 "Ancillary Armor Repairer": "armorRepair",}
 
                 capUsed = self.capUsed
                 for attr in ("shieldRepair", "armorRepair", "hullRepair"):
@@ -822,8 +873,17 @@ class Fit(object):
         rechargeRate = self.ship.getModifiedItemAttr("shieldRechargeRate") / 1000.0
         return 10 / rechargeRate * sqrt(percent) * (1 - sqrt(percent)) * capacity
 
-    def addDrain(self, cycleTime, capNeed, clipSize=0):
+    def addDrain(self, src, cycleTime, capNeed, clipSize=0):
         """ Used for both cap drains and cap fills (fills have negative capNeed) """
+
+        rigSize = self.ship.getModifiedItemAttr("rigSize")
+        energyNeutralizerSignatureResolution = src.getModifiedItemAttr("energyNeutralizerSignatureResolution")
+        signatureRadius = self.ship.getModifiedItemAttr("signatureRadius")
+
+        #Signature reduction, uses the bomb formula as per CCP Larrikin
+        if energyNeutralizerSignatureResolution:
+            capNeed = capNeed*min(1, signatureRadius/energyNeutralizerSignatureResolution)
+
         resistance = self.ship.getModifiedItemAttr("energyWarfareResistance") or 1 if capNeed > 0 else 1
         self.__extraDrains.append((cycleTime, capNeed * resistance, clipSize))
 
@@ -976,6 +1036,11 @@ class Fit(object):
             droneDPS += dps
             droneVolley += volley
 
+        for fighter in self.fighters:
+            dps, volley = fighter.damageStats(self.targetResists)
+            droneDPS += dps
+            droneVolley += volley
+
         self.__weaponDPS = weaponDPS
         self.__weaponVolley = weaponVolley
         self.__droneDPS = droneDPS
@@ -999,7 +1064,7 @@ class Fit(object):
         copy.damagePattern = self.damagePattern
         copy.targetResists = self.targetResists
 
-        toCopy = ("modules", "drones", "cargo", "implants", "boosters", "projectedModules", "projectedDrones")
+        toCopy = ("modules", "drones", "fighters", "cargo", "implants", "boosters", "projectedModules", "projectedDrones", "projectedFighters")
         for name in toCopy:
             orig = getattr(self, name)
             c = getattr(copy, name)

@@ -78,9 +78,9 @@ if not args.nojson:
     )
 
     list = "dgmexpressions,dgmattribs,dgmeffects,dgmtypeattribs,dgmtypeeffects,"\
-           "dgmunits,icons,invcategories,invgroups,invmetagroups,invmetatypes,"\
+           "dgmunits,invcategories,invgroups,invmetagroups,invmetatypes,"\
            "invtypes,mapbulk_marketGroups,phbmetadata,phbtraits,fsdTypeOverrides,"\
-           "evegroups,evetypes,evecategories"
+           "evegroups,evetypes,evecategories,marketProxy()_GetMarketGroups()"
 
     FlowManager(miners, writers).run(list, "multi")
 

@@ -60,7 +60,7 @@ def main(db, json_path):
         "evetypes": eos.gamedata.Item,
         "phbtraits": eos.gamedata.Traits,
         "phbmetadata": eos.gamedata.MetaData,
-        "mapbulk_marketGroups": eos.gamedata.MarketGroup
+        "marketProxy()_GetMarketGroups()": eos.gamedata.MarketGroup
     }
 
     fieldMapping = {
@@ -89,7 +89,7 @@ def main(db, json_path):
             "description_en-us": "description"
         },
         #phbtraits???
-        "mapbulk_marketGroups": {
+        "marketProxy()_GetMarketGroups()": {
             "marketGroupName_en-us": "marketGroupName",
             "description_en-us": "description"
         }
@@ -176,7 +176,10 @@ def main(db, json_path):
     for row in data["evetypes"]:
         # 1306 - group Ship Modifiers, for items like tactical t3 ship modes
         # (3638, 3634, 3636, 3640) - Civilian weapons
-        if (row["published"] or row['groupID'] == 1306 or row['typeID'] in (3638, 3634, 3636, 3640)):
+        # (41549, 41548, 41551, 41550) - Micro Bombs (Fighters)
+        if (row["published"] or row['groupID'] == 1306
+            or row['typeID'] in (3638, 3634, 3636, 3640)
+            or row['typeID'] in (41549, 41548, 41551,41550)):
             eveTypes.add(row["typeID"])
 
     # ignore checker
@@ -201,8 +204,12 @@ def main(db, json_path):
                     split = row['iconFile'].split('_')
                     if len(split) == 3:
                         row['iconFile'] = "{}_{}".format(split[0], split[2])
+                if jsonName is "icons" and "modules/" in str(row["iconFile"]).lower():
+                    row["iconFile"] = row["iconFile"].lower().replace("modules/", "").replace(".png", "")
 
                 for k, v in row.iteritems():
+                    if (isinstance(v, basestring)):
+                        v = v.strip()
                     setattr(instance, fieldMap.get(k, k), v)
 
                 eos.db.gamedata_session.add(instance)

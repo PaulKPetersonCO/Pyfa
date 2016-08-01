@@ -1,4 +1,4 @@
-#===============================================================================
+# ===============================================================================
 # Copyright (C) 2010 Diego Duclos
 #
 # This file is part of pyfa.
@@ -15,7 +15,7 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with pyfa.  If not, see <http://www.gnu.org/licenses/>.
-#===============================================================================
+# ===============================================================================
 
 import locale
 import copy
@@ -39,6 +39,7 @@ from service.settings import SettingsProvider
 from service.port import Port
 
 logger = logging.getLogger(__name__)
+
 
 class FitBackupThread(threading.Thread):
     def __init__(self, path, callback):
@@ -257,7 +258,7 @@ class Fit(object):
 
             if not projected:
                 for fitP in fit.projectedFits:
-                    self.getFit(fitP.ID, projected = True)
+                    self.getFit(fitP.ID, projected=True)
                 self.recalc(fit, withBoosters=True)
                 fit.fill()
 
@@ -277,7 +278,7 @@ class Fit(object):
                 fit.timestamp))
         return fits
 
-    def addImplant(self, fitID, itemID):
+    def addImplant(self, fitID, itemID, recalc=True):
         if fitID is None:
             return False
 
@@ -289,7 +290,8 @@ class Fit(object):
             return False
 
         fit.implants.append(implant)
-        self.recalc(fit)
+        if recalc:
+            self.recalc(fit)
         return True
 
     def removeImplant(self, fitID, position):
@@ -328,6 +330,9 @@ class Fit(object):
         return True
 
     def project(self, fitID, thing):
+        if fitID is None:
+            return
+
         fit = eos.db.getFit(fitID)
 
         if isinstance(thing, int):
@@ -355,6 +360,10 @@ class Fit(object):
                 fit.projectedDrones.append(drone)
 
             drone.amount += 1
+        elif thing.category.name == "Fighter":
+            print "dskfnds"
+            fighter = eos.types.Fighter(thing)
+            fit.projectedFighters.append(fighter)
         elif thing.group.name == "Effect Beacon":
             module = eos.types.Module(thing)
             module.state = State.ONLINE
@@ -377,6 +386,8 @@ class Fit(object):
                 thing.amountActive = thing.amount
             else:
                 thing.amountActive = 0
+        elif isinstance(thing, eos.types.Fighter):
+            thing.active = not thing.active
         elif isinstance(thing, eos.types.Module):
             thing.state = self.__getProposedState(thing, click)
             if not thing.canHaveState(thing.state, fit):
@@ -400,15 +411,24 @@ class Fit(object):
         eos.db.commit()
         self.recalc(fit)
 
+    def changeActiveFighters(self, fitID, fighter, amount):
+        fit = eos.db.getFit(fitID)
+        fighter.amountActive = amount
+
+        eos.db.commit()
+        self.recalc(fit)
+
     def removeProjected(self, fitID, thing):
         fit = eos.db.getFit(fitID)
         if isinstance(thing, eos.types.Drone):
             fit.projectedDrones.remove(thing)
         elif isinstance(thing, eos.types.Module):
             fit.projectedModules.remove(thing)
+        elif isinstance(thing, eos.types.Fighter):
+            fit.projectedFighters.remove(thing)
         else:
             del fit.__projectedFits[thing.ID]
-            #fit.projectedFits.remove(thing)
+            # fit.projectedFits.remove(thing)
 
         eos.db.commit()
         self.recalc(fit)
@@ -458,8 +478,6 @@ class Fit(object):
 
     def changeModule(self, fitID, position, newItemID):
         fit = eos.db.getFit(fitID)
-        if fit.modules[position].isEmpty:
-            return None
 
         # Dummy it out in case the next bit fails
         fit.modules.toDummy(position)
@@ -500,10 +518,11 @@ class Fit(object):
         fit = eos.db.getFit(fitID)
 
         module = fit.modules[moduleIdx]
+        cargo = fit.cargo[cargoIdx]
 
         # Gather modules and convert Cargo item to Module, silently return if not a module
         try:
-            cargoP = eos.types.Module(fit.cargo[cargoIdx].item)
+            cargoP = eos.types.Module(cargo.item)
             cargoP.owner = fit
             if cargoP.isValidState(State.ACTIVE):
                 cargoP.state = State.ACTIVE
@@ -523,12 +542,19 @@ class Fit(object):
         fit.modules.insert(moduleIdx, cargoP)
 
         if not copyMod:  # remove existing cargo if not cloning
-            fit.cargo.remove(fit.cargo[cargoIdx])
+            if cargo.amount == 1:
+                fit.cargo.remove(cargo)
+            else:
+                cargo.amount -= 1
 
         if not module.isEmpty:  # if module is placeholder, we don't want to convert/add it
-            moduleP = eos.types.Cargo(module.item)
-            moduleP.amount = 1
-            fit.cargo.insert(cargoIdx, moduleP)
+            for x in fit.cargo.find(module.item):
+                x.amount += 1
+                break
+            else:
+                moduleP = eos.types.Cargo(module.item)
+                moduleP.amount = 1
+                fit.cargo.insert(cargoIdx, moduleP)
 
         eos.db.commit()
         self.recalc(fit)
@@ -612,6 +638,42 @@ class Fit(object):
         fit = eos.db.getFit(fitID)
         charge = fit.cargo[position]
         fit.cargo.remove(charge)
+        self.recalc(fit)
+        return True
+
+    def addFighter(self, fitID, itemID):
+        if fitID is None:
+            return False
+
+        fit = eos.db.getFit(fitID)
+        item = eos.db.getItem(itemID, eager=("attributes", "group.category"))
+        if item.category.name == "Fighter":
+            fighter = None
+            '''
+            for d in fit.fighters.find(item):
+                if d is not None and d.amountActive == 0 and d.amount < max(5, fit.extraAttributes["maxActiveDrones"]):
+                    drone = d
+                    break
+            '''
+            if fighter is None:
+                fighter = eos.types.Fighter(item)
+                if fighter.fits(fit) is True:
+                    fit.fighters.append(fighter)
+                else:
+                    return False
+
+            eos.db.commit()
+            self.recalc(fit)
+            return True
+        else:
+            return False
+
+    def removeFighter(self, fitID, i):
+        fit = eos.db.getFit(fitID)
+        f = fit.fighters[i]
+        fit.fighters.remove(f)
+
+        eos.db.commit()
         self.recalc(fit)
         return True
 
@@ -712,10 +774,27 @@ class Fit(object):
         self.recalc(fit)
         return True
 
+    def toggleFighter(self, fitID, i):
+        fit = eos.db.getFit(fitID)
+        f = fit.fighters[i]
+        f.active = not f.active
+
+        eos.db.commit()
+        self.recalc(fit)
+        return True
+
     def toggleImplant(self, fitID, i):
         fit = eos.db.getFit(fitID)
         implant = fit.implants[i]
         implant.active = not implant.active
+
+        eos.db.commit()
+        self.recalc(fit)
+        return True
+
+    def toggleImplantSource(self, fitID, source):
+        fit = eos.db.getFit(fitID)
+        fit.implantSource = source
 
         eos.db.commit()
         self.recalc(fit)
@@ -729,6 +808,12 @@ class Fit(object):
         eos.db.commit()
         self.recalc(fit)
         return True
+
+    def toggleFighterAbility(self, fitID, ability):
+        fit = eos.db.getFit(fitID)
+        ability.active = not ability.active
+        eos.db.commit()
+        self.recalc(fit)
 
     def changeChar(self, fitID, charID):
         if fitID is None or charID is None:
@@ -859,7 +944,7 @@ class Fit(object):
         fits = []
         for path in paths:
             if callback:  # Pulse
-                wx.CallAfter(callback, 1, "Processing file:\n%s"%path)
+                wx.CallAfter(callback, 1, "Processing file:\n%s" % path)
 
             file = open(path, "r")
             srcString = file.read()
@@ -871,38 +956,38 @@ class Fit(object):
             # If file had ANSI encoding, decode it to unicode using detection
             # of BOM header or if there is no header try default
             # codepage then fallback to utf-16, cp1252
-        
+
             if isinstance(srcString, str):
                 encoding_map = (
-                ('\xef\xbb\xbf', 'utf-8'),
-                ('\xff\xfe\0\0', 'utf-32'),
-                ('\0\0\xfe\xff', 'UTF-32BE'),
-                ('\xff\xfe', 'utf-16'),
-                ('\xfe\xff', 'UTF-16BE'))
+                    ('\xef\xbb\xbf', 'utf-8'),
+                    ('\xff\xfe\0\0', 'utf-32'),
+                    ('\0\0\xfe\xff', 'UTF-32BE'),
+                    ('\xff\xfe', 'utf-16'),
+                    ('\xfe\xff', 'UTF-16BE'))
 
                 for bom, encoding in encoding_map:
                     if srcString.startswith(bom):
                         codec_found = encoding
                         savebom = bom
-            
+
                 if codec_found is None:
                     logger.info("Unicode BOM not found in file %s.", path)
                     attempt_codecs = (defcodepage, "utf-8", "utf-16", "cp1252")
 
                     for page in attempt_codecs:
-                         try:
-                             logger.info("Attempting to decode file %s using %s page.", path, page)
-                             srcString = unicode(srcString, page)
-                             codec_found = page
-                             logger.info("File %s decoded using %s page.", path, page)
-                         except UnicodeDecodeError:
-                             logger.info("Error unicode decoding %s from page %s, trying next codec", path, page)
-                         else:
-                             break
+                        try:
+                            logger.info("Attempting to decode file %s using %s page.", path, page)
+                            srcString = unicode(srcString, page)
+                            codec_found = page
+                            logger.info("File %s decoded using %s page.", path, page)
+                        except UnicodeDecodeError:
+                            logger.info("Error unicode decoding %s from page %s, trying next codec", path, page)
+                        else:
+                            break
                 else:
                     logger.info("Unicode BOM detected in %s, using %s page.", path, codec_found)
                     srcString = unicode(srcString[len(savebom):], codec_found)
-            
+
             else:
                 # nasty hack to detect other transparent utf-16 loading
                 if srcString[0] == '<' and 'utf-16' in srcString[:128].lower():
@@ -917,10 +1002,10 @@ class Fit(object):
                 _, fitsImport = Port.importAuto(srcString, path, callback=callback, encoding=codec_found)
                 fits += fitsImport
             except xml.parsers.expat.ExpatError, e:
-                return False, "Malformed XML in %s"%path
+                return False, "Malformed XML in %s" % path
             except Exception, e:
                 logger.exception("Unknown exception processing: %s", path)
-                return False, "Unknown Error while processing %s"%path
+                return False, "Unknown Error while processing %s" % path
 
         IDs = []
         numFits = len(fits)
@@ -935,7 +1020,7 @@ class Fit(object):
                 wx.CallAfter(
                     callback, 1,
                     "Processing complete, saving fits to database\n(%d/%d)" %
-                    (i+1, numFits)
+                    (i + 1, numFits)
                 )
 
         return True, fits
@@ -1038,7 +1123,7 @@ class Fit(object):
         self.recalc(fit)
 
     def recalc(self, fit, withBoosters=True):
-        logger.debug("="*10+"recalc"+"="*10)
+        logger.debug("=" * 10 + "recalc" + "=" * 10)
         if fit.factorReload is not self.serviceFittingOptions["useGlobalForceReload"]:
             fit.factorReload = self.serviceFittingOptions["useGlobalForceReload"]
         fit.clear()

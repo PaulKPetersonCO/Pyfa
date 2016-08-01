@@ -50,6 +50,7 @@ from gui.characterEditor import CharacterEditor, SaveCharacterAs
 from gui.characterSelection import CharacterSelection
 from gui.patternEditor import DmgPatternEditorDlg
 from gui.resistsEditor import ResistsEditorDlg
+from gui.setEditor import ImplantSetEditorDlg
 from gui.preferenceDialog import PreferenceDialog
 from gui.graphFrame import GraphFrame
 from gui.copySelectDialog import CopySelectDialog
@@ -60,6 +61,7 @@ from gui.builtinViews import *
 
 # import this to access override setting
 from eos.modifiedAttributeDict import ModifiedAttributeDict
+from eos.db.saveddata.loadDefaultDatabaseValues import DefaultDatabaseValues
 
 from time import gmtime, strftime
 
@@ -358,14 +360,15 @@ class MainFrame(wx.Frame):
         dlg.Show()
 
     def showTargetResistsEditor(self, event):
-        dlg=ResistsEditorDlg(self)
-        dlg.ShowModal()
-        dlg.Destroy()
+        ResistsEditorDlg(self)
 
     def showDamagePatternEditor(self, event):
         dlg=DmgPatternEditorDlg(self)
         dlg.ShowModal()
         dlg.Destroy()
+
+    def showImplantSetEditor(self, event):
+        ImplantSetEditorDlg(self)
 
     def showExportDialog(self, event):
         """ Export active fit """
@@ -403,10 +406,20 @@ class MainFrame(wx.Frame):
     def goForums(self, event):
         webbrowser.open('https://forums.eveonline.com/default.aspx?g=posts&t=466425')
 
+    def loadDatabaseDefaults(self, event):
+        # Import values that must exist otherwise Pyfa breaks
+        DefaultDatabaseValues.importRequiredDefaults()
+        # Import default values for damage profiles
+        DefaultDatabaseValues.importDamageProfileDefaults()
+        # Import default values for target resist profiles
+        DefaultDatabaseValues.importResistProfileDefaults()
+
     def registerMenu(self):
         menuBar = self.GetMenuBar()
         # Quit
         self.Bind(wx.EVT_MENU, self.ExitApp, id=wx.ID_EXIT)
+        # Load Default Database values
+        self.Bind(wx.EVT_MENU, self.loadDatabaseDefaults, id=menuBar.importDatabaseDefaultsId)
         # Widgets Inspector
         if config.debug:
             self.Bind(wx.EVT_MENU, self.openWXInspectTool, id = self.widgetInspectMenuID)
@@ -418,6 +431,8 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.showDamagePatternEditor, id=menuBar.damagePatternEditorId)
         # Target Resists editor
         self.Bind(wx.EVT_MENU, self.showTargetResistsEditor, id=menuBar.targetResistsEditorId)
+        # Implant Set editor
+        self.Bind(wx.EVT_MENU, self.showImplantSetEditor, id=menuBar.implantSetEditorId)
         # Import dialog
         self.Bind(wx.EVT_MENU, self.fileImportDialog, id=wx.ID_OPEN)
         # Export dialog

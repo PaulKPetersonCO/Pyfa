@@ -1,7 +1,7 @@
 # warpScrambleBlockMWDWithNPCEffect
 #
 # Used by:
-# Variations of module: Warp Scrambler I (19 of 19)
+# Modules named like: Warp Scrambler (26 of 26)
 runTime = "early"
 type = "projected", "active"
 

@@ -86,7 +86,7 @@ class Miscellanea(ViewColumn):
                     info.append("{0}{1}".format(n, slot[0].upper()))
             return "+ "+", ".join(info), "Slot Modifiers"
         elif itemGroup == "Energy Neutralizer":
-            neutAmount = stuff.getModifiedItemAttr("energyDestabilizationAmount")
+            neutAmount = stuff.getModifiedItemAttr("energyNeutralizerAmount")
             cycleTime = stuff.cycleTime
             if not neutAmount or not cycleTime:
                 return "", None
@@ -205,47 +205,49 @@ class Miscellanea(ViewColumn):
 
             tooltip = "{0} disruption".format(formatList(ttEntries)).capitalize()
             return text, tooltip
-        elif itemGroup in ("ECM", "Burst Jammer", "Remote ECM Burst"):
+        elif itemGroup in ("ECM", "Burst Jammer", "Burst Projectors"):
             grav = stuff.getModifiedItemAttr("scanGravimetricStrengthBonus")
             ladar = stuff.getModifiedItemAttr("scanLadarStrengthBonus")
             radar = stuff.getModifiedItemAttr("scanRadarStrengthBonus")
             magnet = stuff.getModifiedItemAttr("scanMagnetometricStrengthBonus")
-            if grav is None or ladar is None or radar is None or magnet is None:
+            displayMax = max(grav, ladar, radar, magnet)
+            displayMin = min(grav, ladar, radar, magnet)
+            if grav is None or ladar is None or radar is None or magnet is None or displayMax is None:
                 return "", None
-            display = max(grav, ladar, radar, magnet)
-            if not display:
-                return "", None
-            text = "{0}".format(formatAmount(display, 3, 0, 3))
-            ttEntries = []
-            if display == grav:
-                ttEntries.append("gravimetric")
-            if display == ladar:
-                ttEntries.append("ladar")
-            if display == magnet:
-                ttEntries.append("magnetometric")
-            if display == radar:
-                ttEntries.append("radar")
-            plu = "" if len(ttEntries) == 1 else "s"
-            tooltip = "{0} strength{1}".format(formatList(ttEntries), plu).capitalize()
+
+            if displayMax == displayMin or displayMin is None:
+                text = "{0}".format(
+                    formatAmount(displayMax, 3, 0, 3),
+                )
+            else:
+                text = "{0} | {1}".format(
+                    formatAmount(displayMax, 3, 0, 3),
+                    formatAmount(displayMin, 3, 0, 3),
+                )
+            tooltip = "ECM Jammer Strength:\n{0} Gravimetric | {1} Ladar | {2} Magnetometric | {3} Radar".format(
+                formatAmount(grav, 3, 0, 3),
+                formatAmount(ladar, 3, 0, 3),
+                formatAmount(radar, 3, 0, 3),
+                formatAmount(magnet, 3, 0, 3),
+            )
             return text, tooltip
         elif itemGroup in ("Remote Sensor Booster", "Sensor Booster", "Signal Amplifier"):
             scanResBonus = stuff.getModifiedItemAttr("scanResolutionBonus")
             lockRangeBonus = stuff.getModifiedItemAttr("maxTargetRangeBonus")
-            if scanResBonus is None or lockRangeBonus is None:
+            gravBonus = stuff.getModifiedItemAttr("scanGravimetricStrengthPercent")
+            if scanResBonus is None or lockRangeBonus is None or gravBonus is None:
                 return "", None
-            display = 0
-            for bonus in (scanResBonus, lockRangeBonus):
-                if abs(bonus) > abs(display):
-                    display = bonus
-            if not display:
-                return "", None
-            text = "{0}%".format(formatAmount(display, 3, 0, 3, forceSign=True))
-            ttEntries = []
-            if display == lockRangeBonus:
-                ttEntries.append("lock range")
-            if display == scanResBonus:
-                ttEntries.append("scan resolution")
-            tooltip = "{0} bonus".format(formatList(ttEntries)).capitalize()
+
+            text = "{0}% | {1}% | {2}%".format(
+                formatAmount(scanResBonus, 3, 0, 3),
+                formatAmount(lockRangeBonus, 3, 0, 3),
+                formatAmount(gravBonus, 3, 0, 3),
+            )
+            tooltip = "Applied bonuses:\n{0}% scan resolution | {1}% lock range | {2}% sensor strength".format(
+                formatAmount(scanResBonus, 3, 0, 3),
+                formatAmount(lockRangeBonus, 3, 0, 3),
+                formatAmount(gravBonus, 3, 0, 3),
+            )
             return text, tooltip
         elif itemGroup in ("Projected ECCM", "ECCM", "Sensor Backup Array"):
             grav = stuff.getModifiedItemAttr("scanGravimetricStrengthPercent")
@@ -427,8 +429,8 @@ class Miscellanea(ViewColumn):
             tooltip = "{0} repaired per second".format(formatList(ttEntries)).capitalize()
             return text, tooltip
         elif itemGroup == "Energy Neutralizer Drone":
-            neutAmount = stuff.getModifiedItemAttr("energyDestabilizationAmount")
-            cycleTime = stuff.getModifiedItemAttr("duration")
+            neutAmount = stuff.getModifiedItemAttr("energyNeutralizerAmount")
+            cycleTime = stuff.getModifiedItemAttr("energyNeutralizerDuration")
             if not neutAmount or not cycleTime:
                 return "", None
             capPerSec = float(-neutAmount) * 1000 / cycleTime
@@ -458,7 +460,7 @@ class Miscellanea(ViewColumn):
                 return text, item.name
             else:
                 return "", None
-        elif itemGroup in ("Fueled Armor Repairer", "Fueled Shield Booster"):
+        elif itemGroup in ("Ancillary Armor Repairer", "Ancillary Shield Booster"):
             hp = stuff.hpBeforeReload
             cycles = stuff.numShots
             cycleTime = stuff.rawCycleTime
@@ -470,24 +472,45 @@ class Miscellanea(ViewColumn):
             useEhp = self.mainFrame.statsPane.nameViewMap["resistancesViewFull"].showEffective
             tooltip = "HP restored over duration using charges"
             if useEhp:
-                if itemGroup == "Fueled Armor Repairer":
+                if itemGroup == "Ancillary Armor Repairer":
                     hpRatio = ehpTotal["armor"] / hpTotal["armor"]
                 else:
                     hpRatio = ehpTotal["shield"] / hpTotal["shield"]
                 tooltip = "E{0}".format(tooltip)
             else:
                 hpRatio = 1
+            if itemGroup == "Ancillary Armor Repairer":
+                hpRatio *= 3
             ehp = hp * hpRatio
             duration = cycles * cycleTime / 1000
             text = "{0} / {1}s".format(formatAmount(ehp, 3, 0, 9), formatAmount(duration, 3, 0, 3))
 
+            return text, tooltip
+        elif itemGroup == "Armor Resistance Shift Hardener":
+            itemArmorResistanceShiftHardenerEM = (1-stuff.getModifiedItemAttr("armorEmDamageResonance"))*100
+            itemArmorResistanceShiftHardenerTherm = (1-stuff.getModifiedItemAttr("armorThermalDamageResonance")) * 100
+            itemArmorResistanceShiftHardenerKin = (1-stuff.getModifiedItemAttr("armorKineticDamageResonance")) * 100
+            itemArmorResistanceShiftHardenerExp = (1-stuff.getModifiedItemAttr("armorExplosiveDamageResonance")) * 100
+
+            text = "{0}% | {1}% | {2}% | {3}%".format(
+                formatAmount(itemArmorResistanceShiftHardenerEM, 3, 0, 3),
+                formatAmount(itemArmorResistanceShiftHardenerTherm, 3, 0, 3),
+                formatAmount(itemArmorResistanceShiftHardenerKin, 3, 0, 3),
+                formatAmount(itemArmorResistanceShiftHardenerExp, 3, 0, 3),
+            )
+            tooltip = "Resistances Shifted to Damage Profile:\n{0}% EM | {1}% Therm | {2}% Kin | {3}% Exp".format(
+                formatAmount(itemArmorResistanceShiftHardenerEM, 3, 0, 3),
+                formatAmount(itemArmorResistanceShiftHardenerTherm, 3, 0, 3),
+                formatAmount(itemArmorResistanceShiftHardenerKin, 3, 0, 3),
+                formatAmount(itemArmorResistanceShiftHardenerExp, 3, 0, 3),
+            )
             return text, tooltip
         elif stuff.charge is not None:
             chargeGroup = stuff.charge.group.name
             if chargeGroup in ("Rocket", "Advanced Rocket", "Light Missile", "Advanced Light Missile", "FoF Light Missile",
                                "Heavy Assault Missile", "Advanced Heavy Assault Missile", "Heavy Missile", "Advanced Heavy Missile", "FoF Heavy Missile",
                                "Torpedo", "Advanced Torpedo", "Cruise Missile", "Advanced Cruise Missile", "FoF Cruise Missile",
-                               "Capital Torpedo", "Capital Cruise"):
+                               "XL Torpedo", "XL Cruise Missile"):
                 cloudSize = stuff.getModifiedChargeAttr("aoeCloudSize")
                 aoeVelocity = stuff.getModifiedChargeAttr("aoeVelocity")
                 if not cloudSize or not aoeVelocity:
