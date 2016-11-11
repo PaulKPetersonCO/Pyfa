@@ -156,7 +156,7 @@ class MainFrame(wx.Frame):
         self.marketBrowser.splitter.SetSashPosition(self.marketHeight)
 
         self.shipBrowser = ShipBrowser(self.notebookBrowsers)
-        self.notebookBrowsers.AddPage(self.shipBrowser, "Ships", tabImage = shipBrowserImg, showClose = False)
+        self.notebookBrowsers.AddPage(self.shipBrowser, "Fittings", tabImage = shipBrowserImg, showClose = False)
 
         #=======================================================================
         # DISABLED FOR RC2 RELEASE
@@ -678,6 +678,10 @@ class MainFrame(wx.Frame):
         sFit = service.Fit.getInstance()
         toClipboard(sFit.exportXml(None, self.getActiveFit()))
 
+    def clipboardMultiBuy(self):
+        sFit = service.Fit.getInstance()
+        toClipboard(sFit.exportMultiBuy(self.getActiveFit()))
+
     def importFromClipboard(self, event):
         sFit = service.Fit.getInstance()
         try:
@@ -692,7 +696,8 @@ class MainFrame(wx.Frame):
                           CopySelectDialog.copyFormatEftImps: self.clipboardEftImps,
                           CopySelectDialog.copyFormatXml: self.clipboardXml,
                           CopySelectDialog.copyFormatDna: self.clipboardDna,
-                          CopySelectDialog.copyFormatCrest: self.clipboardCrest}
+                          CopySelectDialog.copyFormatCrest: self.clipboardCrest,
+                          CopySelectDialog.copyFormatMultiBuy: self.clipboardMultiBuy}
         dlg = CopySelectDialog(self)
         dlg.ShowModal()
         selected = dlg.GetSelected()

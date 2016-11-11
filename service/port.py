@@ -21,7 +21,7 @@ import re
 import os
 import xml.dom
 
-from eos.types import State, Slot, Module, Cargo, Fit, Ship, Drone, Implant, Booster
+from eos.types import State, Slot, Module, Cargo, Fit, Ship, Drone, Implant, Booster, Citadel
 import service
 import wx
 import logging
@@ -174,7 +174,10 @@ class Port(object):
         f.name = fit['name']
 
         try:
-            f.ship = Ship(sMkt.getItem(fit['ship']['id']))
+            try:
+                f.ship = Ship(sMkt.getItem(fit['ship']['id']))
+            except ValueError:
+                f.ship = Citadel(sMkt.getItem(fit['ship']['id']))
         except:
             return None
 
@@ -228,7 +231,13 @@ class Port(object):
         ids = map(int, re.findall(r'\d+', string))
         for id in ids:
             try:
-                Ship(sMkt.getItem(id))
+                try:
+                    try:
+                        Ship(sMkt.getItem(sMkt.getItem(id)))
+                    except ValueError:
+                        Citadel(sMkt.getItem(sMkt.getItem(id)))
+                except ValueError:
+                    Citadel(sMkt.getItem(id))
                 string = string[string.index(str(id)):]
                 break
             except:
@@ -238,7 +247,10 @@ class Port(object):
 
         f = Fit()
         try:
-            f.ship = Ship(sMkt.getItem(int(info[0])))
+            try:
+                f.ship = Ship(sMkt.getItem(int(info[0])))
+            except ValueError:
+                f.ship = Citadel(sMkt.getItem(int(info[0])))
             f.name = "{0} - DNA Imported".format(f.ship.item.name)
         except UnicodeEncodeError as e:
             def logtransform(s):
@@ -309,7 +321,10 @@ class Port(object):
 
         try:
             ship = sMkt.getItem(shipType)
-            fit.ship = Ship(ship)
+            try:
+                fit.ship = Ship(ship)
+            except ValueError:
+                fit.ship = Citadel(ship)
             fit.name = fitName
         except:
             return
@@ -463,7 +478,10 @@ class Port(object):
                 # Strip square brackets and pull out a fit name
                 f.name = fitLines[0][1:-1]
                 # Assign ship to fitting
-                f.ship = Ship(sMkt.getItem(shipname))
+                try:
+                    f.ship = Ship(sMkt.getItem(shipname))
+                except ValueError:
+                    f.ship = Citadel(sMkt.getItem(shipname))
 
                 moduleList = []
                 for x in range(1, len(fitLines)):
@@ -610,7 +628,10 @@ class Port(object):
             # <localized hint="Maelstrom">Maelstrom</localized>
             shipType = fitting.getElementsByTagName("shipType").item(0).getAttribute("value")
             try:
-                f.ship = Ship(sMkt.getItem(shipType))
+                try:
+                    f.ship = Ship(sMkt.getItem(shipType))
+                except ValueError:
+                    f.ship = Citadel(sMkt.getItem(shipType))
             except:
                 continue
             hardwares = fitting.getElementsByTagName("hardware")
@@ -698,6 +719,11 @@ class Port(object):
             for drone in fit.drones:
                 export += "%s x%s\n" % (drone.item.name, drone.amount)
 
+        if len(fit.fighters) > 0:
+            export += "\n\n"
+            for fighter in fit.fighters:
+                export += "%s x%s\n" % (fighter.item.name, fighter.amountActive)
+
         if export[-1] == "\n":
             export = export[:-1]
 
@@ -720,10 +746,13 @@ class Port(object):
     def exportEftImps(cls, fit):
         export = cls._exportEftBase(fit)
 
-        if len(fit.implants) > 0:
+        if len(fit.implants) > 0 or len(fit.boosters) > 0:
             export += "\n\n\n"
             for implant in fit.implants:
                 export += "%s\n" % implant.item.name
+            for booster in fit.boosters:
+                export += "%s\n" % booster.item.name
+
         if export[-1] == "\n":
             export = export[:-1]
 
@@ -858,3 +887,50 @@ class Port(object):
                     wx.CallAfter(callback, i)
 
         return doc.toprettyxml()
+
+    @staticmethod
+    def exportMultiBuy(fit):
+        export = "%s\n" % (fit.ship.item.name)
+        stuff = {}
+        sFit = service.Fit.getInstance()
+        for module in fit.modules:
+            slot = module.slot
+            if not slot in stuff:
+                stuff[slot] = []
+            curr = "%s\n" % module.item.name if module.item else (
+            "")
+            if module.charge and sFit.serviceFittingOptions["exportCharges"]:
+                curr += "%s x%s\n" % (module.charge.name, module.numCharges)
+            stuff[slot].append(curr)
+
+        for slotType in EFT_SLOT_ORDER:
+            data = stuff.get(slotType)
+            if data is not None:
+                # export += "\n"
+                for curr in data:
+                    export += curr
+
+        if len(fit.drones) > 0:
+            for drone in fit.drones:
+                export += "%s x%s\n" % (drone.item.name, drone.amount)
+
+        if len(fit.cargo) > 0:
+            for cargo in fit.cargo:
+                export += "%s x%s\n" % (cargo.item.name, cargo.amount)
+
+        if len(fit.implants) > 0:
+            for implant in fit.implants:
+                export += "%s\n" % implant.item.name
+
+        if len(fit.boosters) > 0:
+            for booster in fit.boosters:
+                export += "%s\n" % booster.item.name
+
+        if len(fit.fighters) > 0:
+            for fighter in fit.fighters:
+                export += "%s x%s\n" % (fighter.item.name, fighter.amountActive)
+
+        if export[-1] == "\n":
+            export = export[:-1]
+
+        return export
