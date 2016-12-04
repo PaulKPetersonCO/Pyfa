@@ -1454,7 +1454,10 @@ class FitItem(SFItem.SFBrowserItem):
         self.shipName, self.shipTrait, self.fitName, self.fitBooster, self.timestamp = shipFittingInfo
         self.shipTrait = re.sub("<.*?>", " ", self.shipTrait)
         # see GH issue #62
-        if self.fitBooster is None: self.fitBooster = False
+
+        # Disabling this due to change in gang boosts Nov 2016
+        #if self.fitBooster is None: self.fitBooster = False
+        self.fitBooster = False
 
         self.boosterBmp = BitmapLoader.getBitmap("fleet_fc_small", "gui")
         self.copyBmp    = BitmapLoader.getBitmap("fit_add_small", "gui")
@@ -1543,6 +1546,24 @@ class FitItem(SFItem.SFBrowserItem):
         wx.PostEvent(self.mainFrame, BoosterListUpdated())
         event.Skip()
 
+    def OnProjectToFit(self, event):
+        activeFit = self.mainFrame.getActiveFit()
+        if activeFit:
+            sFit = service.Fit.getInstance()
+            projectedFit = sFit.getFit(self.fitID)
+            sFit.project(activeFit, projectedFit)
+            wx.PostEvent(self.mainFrame, GE.FitChanged(fitID=activeFit))
+            self.mainFrame.additionsPane.select("Projected")
+
+    def OnAddCommandFit(self, event):
+        activeFit = self.mainFrame.getActiveFit()
+        if activeFit:
+            sFit = service.Fit.getInstance()
+            commandFit = sFit.getFit(self.fitID)
+            sFit.addCommandFit(activeFit, commandFit)
+            wx.PostEvent(self.mainFrame, GE.FitChanged(fitID=activeFit))
+            self.mainFrame.additionsPane.select("Command")
+
     def OnMouseCaptureLost(self, event):
         ''' Destroy drag information (GH issue #479)'''
         if self.dragging and self.dragged:
@@ -1555,6 +1576,11 @@ class FitItem(SFItem.SFBrowserItem):
 
     def OnContextMenu(self, event):
         ''' Handles context menu for fit. Dragging is handled by MouseLeftUp() '''
+        sFit = service.Fit.getInstance()
+        fit = sFit.getFit(self.mainFrame.getActiveFit())
+
+        if not fit:
+            return
 
         pos = wx.GetMousePosition()
         pos = self.ScreenToClient(pos)
@@ -1563,18 +1589,22 @@ class FitItem(SFItem.SFBrowserItem):
         self.mainFrame.additionsPane.gangPage.draggedFitID = self.fitID
 
         menu = wx.Menu()
-        toggleItem = menu.Append(wx.ID_ANY, "Booster Fit", kind=wx.ITEM_CHECK)
-        menu.Check(toggleItem.GetId(), self.fitBooster)
-        self.Bind(wx.EVT_MENU, self.OnToggleBooster, toggleItem)
+        # toggleItem = menu.Append(wx.ID_ANY, "Booster Fit", kind=wx.ITEM_CHECK)
+        # menu.Check(toggleItem.GetId(), self.fitBooster)
+        # self.Bind(wx.EVT_MENU, self.OnToggleBooster, toggleItem)
 
-        sFit = service.Fit.getInstance()
-        fit = sFit.getFit(self.mainFrame.getActiveFit())
+        # if fit and not fit.isStructure:
+        #     # If there is an active fit, get menu for setting individual boosters
+        #     menu.AppendSeparator()
+        #     boosterMenu = self.mainFrame.additionsPane.gangPage.buildBoostermenu()
+        #     menu.AppendSubMenu(boosterMenu, 'Set Booster')
 
-        if fit and not fit.isStructure:
-            # If there is an active fit, get menu for setting individual boosters
-            menu.AppendSeparator()
-            boosterMenu = self.mainFrame.additionsPane.gangPage.buildBoostermenu()
-            menu.AppendSubMenu(boosterMenu, 'Set Booster')
+        if fit:
+            projectedItem = menu.Append(wx.ID_ANY, "Project onto Active Fit")
+            self.Bind(wx.EVT_MENU, self.OnProjectToFit, projectedItem)
+
+            commandItem = menu.Append(wx.ID_ANY, "Add Command Booster")
+            self.Bind(wx.EVT_MENU, self.OnAddCommandFit, commandItem )
 
         self.PopupMenu(menu, pos)
 

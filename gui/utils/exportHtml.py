@@ -45,14 +45,10 @@ class exportHtmlThread(threading.Thread):
 
         timestamp = time.localtime(time.time())
         localDate = "%d/%02d/%02d %02d:%02d" % (timestamp[0], timestamp[1], timestamp[2], timestamp[3], timestamp[4])
-        
+
         minimal = settings.getMinimalEnabled();
-        website = settings.getWebsite()
-        if website == "o.smium.org":
-            dnaUrl = "https://o.smium.org/loadout/dna/"
-        elif website == "null-sec.com":
-            dnaUrl = "https://null-sec.com/hangar/?dna="
-        
+        dnaUrl = "https://o.smium.org/loadout/dna/"
+
         if minimal:
             HTML = self.generateMinimalHTML(sMkt,sFit, dnaUrl)
         else:
@@ -241,14 +237,10 @@ class exportHtmlThread(threading.Thread):
  </div>
 </div>
 </body>
-</html>"""        
-
+</html>"""
 
         return HTML
-        
-        
-        
-        
+
     def generateMinimalHTML(self,sMkt,sFit,dnaUrl):
         """ Generate a minimal HTML version of the fittings, without any javascript or styling"""
         categoryList = list(sMkt.getShipRoot())
@@ -272,15 +264,11 @@ class exportHtmlThread(threading.Thread):
                         return
                     try:
                         dnaFit = sFit.exportDna(fit[0])                  
-                        HTML += '<a class="inGameBrowserLink" target="_blank" href=javascript:CCPEVE.showFitting("'+dnaFit+'");>IGB</a>' +\
-								' / <a class="outOfGameBrowserLink" target="_blank" href="' + dnaUrl + dnaFit + '">OOGB</a>    '+ship.name +': '+ fit[1]+ '<br> \n'
+                        HTML += '<a class="outOfGameBrowserLink" target="_blank" href="' + dnaUrl + dnaFit + '">'+ship.name +': '+ fit[1]+ '</a><br> \n'
                     except:
                         continue
                     finally:
                         if self.callback:
                             wx.CallAfter(self.callback, count)
                         count += 1
-        return HTML;
-                 
-    
-        
+        return HTML
