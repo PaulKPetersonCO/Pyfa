@@ -1,14 +1,20 @@
 from gui.contextMenu import ContextMenu
 from gui.itemStats import ItemStatsDialog
 import gui.mainFrame
-import service
+# noinspection PyPackageRequirements
 import wx
+from service.fit import Fit
+from service.settings import ContextMenuSettings
+
 
 class ItemStats(ContextMenu):
     def __init__(self):
         self.mainFrame = gui.mainFrame.MainFrame.getInstance()
+        self.settings = ContextMenuSettings.getInstance()
 
     def display(self, srcContext, selection):
+        if not self.settings.get('itemStats'):
+            return False
 
         return srcContext in ("marketItemGroup", "marketItemMisc",
                               "fittingModule", "fittingCharge",
@@ -28,7 +34,7 @@ class ItemStats(ContextMenu):
         srcContext = fullContext[0]
         if srcContext == "fittingShip":
             fitID = self.mainFrame.getActiveFit()
-            sFit = service.Fit.getInstance()
+            sFit = Fit.getInstance()
             stuff = sFit.getFit(fitID).ship
         elif srcContext == "fittingMode":
             stuff = selection[0].item
@@ -61,5 +67,6 @@ class ItemStats(ContextMenu):
 
         else:
             ItemStatsDialog(stuff, fullContext)
+
 
 ItemStats.register()

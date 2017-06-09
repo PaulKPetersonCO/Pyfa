@@ -1,4 +1,4 @@
-#===============================================================================
+# =============================================================================
 # Copyright (C) 2010 Diego Duclos
 #
 # This file is part of pyfa.
@@ -15,49 +15,58 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with pyfa.  If not, see <http://www.gnu.org/licenses/>.
-#===============================================================================
+# =============================================================================
 
+# noinspection PyPackageRequirements
 import wx
 import gui.display as d
 import gui.globalEvents as GE
-import service
+
 import gui.droneView
 from gui.builtinViewColumns.state import State
 from gui.contextMenu import ContextMenu
-import eos.types
+from gui.builtinContextMenus.commandFits import CommandFits
+from gui.utils.staticHelpers import DragDropHelper
+from service.fit import Fit
+from eos.saveddata.drone import Drone as es_Drone
 
 
-class DummyItem:
+class DummyItem(object):
     def __init__(self, txt):
         self.name = txt
         self.icon = None
 
-class DummyEntry:
+
+class DummyEntry(object):
     def __init__(self, txt):
         self.item = DummyItem(txt)
 
-class CommandViewDrop(wx.PyDropTarget):
-   def __init__(self, dropFn):
-       wx.PyDropTarget.__init__(self)
-       self.dropFn = dropFn
-       # this is really transferring an EVE itemID
-       self.dropData = wx.PyTextDataObject()
-       self.SetDataObject(self.dropData)
 
-   def OnData(self, x, y, t):
-       if self.GetData():
-           data = self.dropData.GetText().split(':')
-           self.dropFn(x, y, data)
-       return t
+class CommandViewDrop(wx.PyDropTarget):
+    def __init__(self, dropFn, *args, **kwargs):
+        super(CommandViewDrop, self).__init__(*args, **kwargs)
+        self.dropFn = dropFn
+        # this is really transferring an EVE itemID
+        self.dropData = wx.PyTextDataObject()
+        self.SetDataObject(self.dropData)
+
+    def OnData(self, x, y, t):
+        if self.GetData():
+            dragged_data = DragDropHelper.data
+            data = dragged_data.split(':')
+            self.dropFn(x, y, data)
+        return t
+
 
 class CommandView(d.Display):
-    DEFAULT_COLS = ["Base Name",]
+    DEFAULT_COLS = ["State", "Base Name"]
 
     def __init__(self, parent):
-        d.Display.__init__(self, parent, style = wx.LC_SINGLE_SEL | wx.BORDER_NONE)
+        d.Display.__init__(self, parent, style=wx.LC_SINGLE_SEL | wx.BORDER_NONE)
 
         self.lastFitId = None
 
+        self.mainFrame.Bind(GE.FIT_CHANGED, CommandFits.populateFits)
         self.mainFrame.Bind(GE.FIT_CHANGED, self.fitChanged)
         self.Bind(wx.EVT_LEFT_DOWN, self.click)
         self.Bind(wx.EVT_RIGHT_DOWN, self.click)
@@ -66,7 +75,7 @@ class CommandView(d.Display):
 
         self.droneView = gui.droneView.DroneView
 
-        if "__WXGTK__" in  wx.PlatformInfo:
+        if "__WXGTK__" in wx.PlatformInfo:
             self.Bind(wx.EVT_RIGHT_UP, self.scheduleMenu)
         else:
             self.Bind(wx.EVT_RIGHT_DOWN, self.scheduleMenu)
@@ -74,56 +83,60 @@ class CommandView(d.Display):
         self.Bind(wx.EVT_LIST_BEGIN_DRAG, self.startDrag)
         self.SetDropTarget(CommandViewDrop(self.handleListDrag))
 
-    def handleListDrag(self, x, y, data):
-        '''
+    @staticmethod
+    def handleListDrag(x, y, data):
+        """
         Handles dragging of items from various pyfa displays which support it
 
         data is list with two indices:
             data[0] is hard-coded str of originating source
             data[1] is typeID or index of data we want to manipulate
-        '''
+        """
         pass
 
-    def kbEvent(self,event):
+    def kbEvent(self, event):
         keycode = event.GetKeyCode()
         if keycode == wx.WXK_DELETE or keycode == wx.WXK_NUMPAD_DELETE:
             fitID = self.mainFrame.getActiveFit()
-            sFit = service.Fit.getInstance()
+            sFit = Fit.getInstance()
             row = self.GetFirstSelected()
             if row != -1:
                 sFit.removeCommand(fitID, self.get(row))
                 wx.PostEvent(self.mainFrame, GE.FitChanged(fitID=fitID))
 
     def handleDrag(self, type, fitID):
-        #Those are drags coming from pyfa sources, NOT builtin wx drags
+        # Those are drags coming from pyfa sources, NOT builtin wx drags
         if type == "fit":
             activeFit = self.mainFrame.getActiveFit()
             if activeFit:
-                sFit = service.Fit.getInstance()
+                sFit = Fit.getInstance()
                 draggedFit = sFit.getFit(fitID)
                 sFit.addCommandFit(activeFit, draggedFit)
                 wx.PostEvent(self.mainFrame, GE.FitChanged(fitID=activeFit))
 
     def startDrag(self, event):
         row = event.GetIndex()
-        if row != -1 and isinstance(self.get(row), eos.types.Drone):
+        if row != -1 and isinstance(self.get(row), es_Drone):
             data = wx.PyTextDataObject()
-            data.SetText("command:"+str(self.GetItemData(row)))
+            dataStr = "command:" + str(self.GetItemData(row))
+            data.SetText(dataStr)
 
             dropSource = wx.DropSource(self)
             dropSource.SetData(data)
+            DragDropHelper.data = dataStr
             dropSource.DoDragDrop()
 
-    def fitSort(self, fit):
+    @staticmethod
+    def fitSort(fit):
         return fit.name
 
     def fitChanged(self, event):
-        sFit = service.Fit.getInstance()
+        sFit = Fit.getInstance()
         fit = sFit.getFit(event.fitID)
 
         self.Parent.Parent.DisablePage(self, not fit or fit.isStructure)
 
-        #Clear list and get out if current fitId is None
+        # Clear list and get out if current fitId is None
         if event.fitID is None and self.lastFitId is not None:
             self.DeleteAllItems()
             self.lastFitId = None
@@ -147,7 +160,7 @@ class CommandView(d.Display):
             self.deselectItems()
 
         # todo: verify
-        if stuff == []:
+        if not stuff:
             stuff = [DummyEntry("Drag a fit to this area")]
 
         self.update(stuff)
@@ -155,7 +168,7 @@ class CommandView(d.Display):
     def get(self, row):
         numFits = len(self.fits)
 
-        if (numFits) == 0:
+        if numFits == 0:
             return None
 
         return self.fits[row]
@@ -168,7 +181,7 @@ class CommandView(d.Display):
             col = self.getColumn(event.Position)
             if col == self.getColIndex(State):
                 fitID = self.mainFrame.getActiveFit()
-                sFit = service.Fit.getInstance()
+                sFit = Fit.getInstance()
                 sFit.toggleCommandFit(fitID, item)
                 wx.PostEvent(self.mainFrame, GE.FitChanged(fitID=fitID))
 
@@ -182,18 +195,18 @@ class CommandView(d.Display):
         menu = None
         if sel != -1:
             item = self.get(sel)
-            if item is None: return
-            sMkt = service.Market.getInstance()
+            if item is None:
+                return
             fitSrcContext = "commandFit"
             fitItemContext = item.name
-            context = ((fitSrcContext,fitItemContext),)
-            context = context + (("command",),)
+            context = ((fitSrcContext, fitItemContext),)
+            context += ("commandView",),
             menu = ContextMenu.getMenu((item,), *context)
         elif sel == -1:
             fitID = self.mainFrame.getActiveFit()
             if fitID is None:
                 return
-            context = (("command",),)
+            context = (("commandView",),)
             menu = ContextMenu.getMenu([], *context)
         if menu is not None:
             self.PopupMenu(menu)
@@ -204,6 +217,8 @@ class CommandView(d.Display):
             col = self.getColumn(event.Position)
             if col != self.getColIndex(State):
                 fitID = self.mainFrame.getActiveFit()
-                sFit = service.Fit.getInstance()
-                sFit.removeCommand(fitID, self.get(row))
-                wx.PostEvent(self.mainFrame, GE.FitChanged(fitID=fitID))
+                sFit = Fit.getInstance()
+                thing = self.get(row)
+                if thing:  # thing doesn't exist if it's the dummy value
+                    sFit.removeCommand(fitID, thing)
+                    wx.PostEvent(self.mainFrame, GE.FitChanged(fitID=fitID))

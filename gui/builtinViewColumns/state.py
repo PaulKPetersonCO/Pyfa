@@ -1,4 +1,4 @@
-#===============================================================================
+# =============================================================================
 # Copyright (C) 2010 Diego Duclos
 #
 # This file is part of pyfa.
@@ -15,18 +15,24 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with pyfa.  If not, see <http://www.gnu.org/licenses/>.
-#===============================================================================
+# =============================================================================
 
+
+# noinspection PyPackageRequirements
+import wx
+
+from eos.saveddata.fit import Fit
+from eos.saveddata.implant import Implant
+from eos.saveddata.drone import Drone
+from eos.saveddata.module import Module, State as State_, Rack
 from gui.viewColumn import ViewColumn
-from gui.bitmapLoader import BitmapLoader
+
 import gui.mainFrame
 
-import wx
-from eos.types import Drone, Module, Rack, Fit, Implant
-from eos.types import State as State_
 
 class State(ViewColumn):
     name = "State"
+
     def __init__(self, fittingView, params):
         ViewColumn.__init__(self, fittingView)
         self.mainFrame = gui.mainFrame.MainFrame.getInstance()
@@ -44,7 +50,8 @@ class State(ViewColumn):
 
     def getImageId(self, stuff):
         generic_active = self.fittingView.imageList.GetImageIndex("state_%s_small" % State_.getName(1).lower(), "gui")
-        generic_inactive = self.fittingView.imageList.GetImageIndex("state_%s_small" % State_.getName(-1).lower(), "gui")
+        generic_inactive = self.fittingView.imageList.GetImageIndex("state_%s_small" % State_.getName(-1).lower(),
+                                                                    "gui")
 
         if isinstance(stuff, Drone):
             if stuff.amountActive > 0:
@@ -57,14 +64,21 @@ class State(ViewColumn):
             if stuff.isEmpty:
                 return -1
             else:
-                return self.fittingView.imageList.GetImageIndex("state_%s_small" % State_.getName(stuff.state).lower(), "gui")
+                return self.fittingView.imageList.GetImageIndex("state_%s_small" % State_.getName(stuff.state).lower(),
+                                                                "gui")
         elif isinstance(stuff, Fit):
             fitID = self.mainFrame.getActiveFit()
-            projectionInfo = stuff.getProjectionInfo(fitID)
 
-            if projectionInfo is None:
+            # Can't use isinstance here due to being prevented from importing CommandView.
+            # So we do the next best thing and compare Name of class.
+            if self.fittingView.__class__.__name__ == "CommandView":
+                info = stuff.getCommandInfo(fitID)
+            else:
+                info = stuff.getProjectionInfo(fitID)
+
+            if info is None:
                 return -1
-            if projectionInfo.active:
+            if info.active:
                 return generic_active
             return generic_inactive
         elif isinstance(stuff, Implant) and stuff.character:
@@ -77,5 +91,6 @@ class State(ViewColumn):
             if active:
                 return generic_active
             return generic_inactive
+
 
 State.register()

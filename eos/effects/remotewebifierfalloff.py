@@ -6,7 +6,8 @@
 type = "active", "projected"
 
 
-def handler(fit, module, context):
-    if "projected" not in context: return
+def handler(fit, module, context, *args, **kwargs):
+    if "projected" not in context:
+        return
     fit.ship.boostItemAttr("maxVelocity", module.getModifiedItemAttr("speedFactor"),
-                           stackingPenalties=True, remoteResists=True)
+                           stackingPenalties=True, *args, **kwargs)

@@ -7,18 +7,17 @@ Migration 8
     modules with their new replacements
 """
 
-
 CONVERSIONS = {
-    8529: (  # Large F-S9 Regolith Compact Shield Extender
+    8529 : (  # Large F-S9 Regolith Compact Shield Extender
         8409,  # Large Subordinate Screen Stabilizer I
     ),
-    8419: (  # Large Azeotropic Restrained Shield Extender
+    8419 : (  # Large Azeotropic Restrained Shield Extender
         8489,  # Large Supplemental Barrier Emitter I
     ),
-    8517: (  # Medium F-S9 Regolith Compact Shield Extender
+    8517 : (  # Medium F-S9 Regolith Compact Shield Extender
         8397,  # Medium Subordinate Screen Stabilizer I
     ),
-    8433: (  # Medium Azeotropic Restrained Shield Extender
+    8433 : (  # Medium Azeotropic Restrained Shield Extender
         8477,  # Medium Supplemental Barrier Emitter I
     ),
     20627: (  # Small 'Trapper' Shield Extender
@@ -29,10 +28,10 @@ CONVERSIONS = {
         8387,  # Micro Subordinate Screen Stabilizer I
         8465,  # Micro Supplemental Barrier Emitter I
     ),
-    8521: (  # Small F-S9 Regolith Compact Shield Extender
+    8521 : (  # Small F-S9 Regolith Compact Shield Extender
         8401,  # Small Subordinate Screen Stabilizer I
     ),
-    8427: (  # Small Azeotropic Restrained Shield Extender
+    8427 : (  # Small Azeotropic Restrained Shield Extender
         8481,  # Small Supplemental Barrier Emitter I
     ),
     11343: (  # 100mm Crystalline Carbonide Restrained Plates
@@ -71,15 +70,16 @@ CONVERSIONS = {
         11321,  # 800mm Reinforced Nanofiber Plates I
     ),
     11317: (  # 800mm Rolled Tungsten Compact Plates
-        11315,  #  800mm Reinforced Titanium Plates I
+        11315,  # 800mm Reinforced Titanium Plates I
     ),
 }
 
-def upgrade(saveddata_engine):
 
+def upgrade(saveddata_engine):
     # Convert modules
     for replacement_item, list in CONVERSIONS.iteritems():
         for retired_item in list:
-            saveddata_engine.execute('UPDATE "modules" SET "itemID" = ? WHERE "itemID" = ?', (replacement_item, retired_item))
-            saveddata_engine.execute('UPDATE "cargo" SET "itemID" = ? WHERE "itemID" = ?', (replacement_item, retired_item))
-
+            saveddata_engine.execute('UPDATE "modules" SET "itemID" = ? WHERE "itemID" = ?',
+                                     (replacement_item, retired_item))
+            saveddata_engine.execute('UPDATE "cargo" SET "itemID" = ? WHERE "itemID" = ?',
+                                     (replacement_item, retired_item))

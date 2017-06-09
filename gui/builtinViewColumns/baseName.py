@@ -1,5 +1,5 @@
-# -*- coding: utf-8 -*-
-#===============================================================================
+# coding: utf-8
+# =============================================================================
 # Copyright (C) 2010 Diego Duclos
 #
 # This file is part of pyfa.
@@ -16,17 +16,27 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with pyfa.  If not, see <http://www.gnu.org/licenses/>.
-#===============================================================================
+# =============================================================================
 
+# noinspection PyPackageRequirements
+import wx
+from logbook import Logger
+from eos.saveddata.cargo import Cargo
+from eos.saveddata.implant import Implant
+from eos.saveddata.drone import Drone
+from eos.saveddata.fighter import Fighter
+from eos.saveddata.module import Module, Slot, Rack
+from eos.saveddata.fit import Fit
+from service.fit import Fit as FitSvc
 from gui.viewColumn import ViewColumn
 import gui.mainFrame
 
-import wx
-from eos.types import Drone, Cargo, Fit, Module, Slot, Rack, Implant, Fighter
-import service
+pyfalog = Logger(__name__)
+
 
 class BaseName(ViewColumn):
     name = "Base Name"
+
     def __init__(self, fittingView, params):
         ViewColumn.__init__(self, fittingView)
 
@@ -39,19 +49,27 @@ class BaseName(ViewColumn):
     def getText(self, stuff):
         if isinstance(stuff, Drone):
             return "%dx %s" % (stuff.amount, stuff.item.name)
-        if isinstance(stuff, Fighter):
-            return "%d/%d %s" % (stuff.amountActive, stuff.getModifiedItemAttr("fighterSquadronMaxSize"), stuff.item.name)
+        elif isinstance(stuff, Fighter):
+            return "%d/%d %s" % \
+                   (stuff.amountActive, stuff.getModifiedItemAttr("fighterSquadronMaxSize"), stuff.item.name)
         elif isinstance(stuff, Cargo):
             return "%dx %s" % (stuff.amount, stuff.item.name)
         elif isinstance(stuff, Fit):
             if self.projectedView:
                 # we need a little more information for the projected view
                 fitID = self.mainFrame.getActiveFit()
-                return "%dx %s (%s)" % (stuff.getProjectionInfo(fitID).amount, stuff.name, stuff.ship.item.name)
+                info = stuff.getProjectionInfo(fitID)
+
+                if info:
+                    return "%dx %s (%s)" % (stuff.getProjectionInfo(fitID).amount, stuff.name, stuff.ship.item.name)
+
+                pyfalog.warning("Projected View trying to display things that aren't there. stuff: {}, info: {}", repr(stuff),
+                                info)
+                return "<unknown>"
             else:
                 return "%s (%s)" % (stuff.name, stuff.ship.item.name)
         elif isinstance(stuff, Rack):
-            if service.Fit.getInstance().serviceFittingOptions["rackLabels"]:
+            if FitSvc.getInstance().serviceFittingOptions["rackLabels"]:
                 if stuff.slot == Slot.MODE:
                     return u'─ Tactical Mode ─'
                 else:
@@ -68,15 +86,16 @@ class BaseName(ViewColumn):
         else:
             item = getattr(stuff, "item", stuff)
 
-            if service.Fit.getInstance().serviceFittingOptions["showMarketShortcuts"]:
+            if FitSvc.getInstance().serviceFittingOptions["showMarketShortcuts"]:
                 marketShortcut = getattr(item, "marketShortcut", None)
 
                 if marketShortcut:
                     # use unicode subscript to display shortcut value
-                    shortcut = unichr(marketShortcut+8320)+u" "
+                    shortcut = unichr(marketShortcut + 8320) + u" "
                     del item.marketShortcut
-                    return shortcut+item.name
+                    return shortcut + item.name
 
             return item.name
+
 
 BaseName.register()

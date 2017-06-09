@@ -1,15 +1,21 @@
 from gui.contextMenu import ContextMenu
-from gui.itemStats import ItemStatsDialog
 import gui.mainFrame
 import gui.globalEvents as GE
-import service
+from service.fit import Fit
+# noinspection PyPackageRequirements
 import wx
+from service.settings import ContextMenuSettings
+
 
 class DroneSplit(ContextMenu):
     def __init__(self):
         self.mainFrame = gui.mainFrame.MainFrame.getInstance()
+        self.settings = ContextMenuSettings.getInstance()
 
     def display(self, srcContext, selection):
+        if not self.settings.get('droneSplit'):
+            return False
+
         return srcContext in ("droneItem", "projectedDrone") and selection[0].amount > 1
 
     def getText(self, itmContext, selection):
@@ -21,11 +27,11 @@ class DroneSplit(ContextMenu):
         dlg.ShowModal()
         dlg.Destroy()
 
+
 DroneSplit.register()
 
 
 class DroneSpinner(wx.Dialog):
-
     def __init__(self, parent, drone, context):
         wx.Dialog.__init__(self, parent, title="Select Amount", size=wx.Size(220, 60))
         self.drone = drone
@@ -37,7 +43,7 @@ class DroneSpinner(wx.Dialog):
         self.spinner.SetRange(1, drone.amount - 1)
         self.spinner.SetValue(1)
 
-        bSizer1.Add(self.spinner, 0, wx.ALL, 5)
+        bSizer1.Add(self.spinner, 1, wx.ALL, 5)
 
         self.button = wx.Button(self, wx.ID_OK, u"Split")
         bSizer1.Add(self.button, 0, wx.ALL, 5)
@@ -48,7 +54,7 @@ class DroneSpinner(wx.Dialog):
         self.button.Bind(wx.EVT_BUTTON, self.split)
 
     def split(self, event):
-        sFit = service.Fit.getInstance()
+        sFit = Fit.getInstance()
         mainFrame = gui.mainFrame.MainFrame.getInstance()
         fitID = mainFrame.getActiveFit()
         if self.context == "droneItem":

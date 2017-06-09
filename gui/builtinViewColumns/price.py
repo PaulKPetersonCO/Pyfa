@@ -1,4 +1,4 @@
-#===============================================================================
+# =============================================================================
 # Copyright (C) 2010 Diego Duclos, Lucas Thode
 #
 # This file is part of pyfa.
@@ -15,17 +15,22 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with pyfa.  If not, see <http://www.gnu.org/licenses/>.
-#===============================================================================
+# =============================================================================
 
+# noinspection PyPackageRequirements
+import wx
+
+from eos.saveddata.cargo import Cargo
+from eos.saveddata.drone import Drone
+from service.price import Price as ServicePrice
 from gui.viewColumn import ViewColumn
 from gui.bitmapLoader import BitmapLoader
 from gui.utils.numberFormatter import formatAmount
-from eos.types import Drone, Cargo
-import wx
-import service
+
 
 class Price(ViewColumn):
     name = "Price"
+
     def __init__(self, fittingView, params):
         ViewColumn.__init__(self, fittingView)
         self.mask = wx.LIST_MASK_IMAGE
@@ -36,36 +41,39 @@ class Price(ViewColumn):
         if stuff.item is None or stuff.item.group.name == "Ship Modifiers":
             return ""
 
-        sMkt = service.Market.getInstance()
-        price = sMkt.getPriceNow(stuff.item.ID)
+        if hasattr(stuff, "isEmpty"):
+            if stuff.isEmpty:
+                return ""
 
-        if not price or not price.price or not price.isValid:
-            return False
+        price = stuff.item.price.price
 
-        price = price.price  # Set new price variable with what we need
+        if not price:
+            return ""
 
         if isinstance(stuff, Drone) or isinstance(stuff, Cargo):
-           price *= stuff.amount
+            price *= stuff.amount
 
         return formatAmount(price, 3, 3, 9, currency=True)
 
     def delayedText(self, mod, display, colItem):
-        sMkt = service.Market.getInstance()
+        sPrice = ServicePrice.getInstance()
+
         def callback(item):
-            price = sMkt.getPriceNow(item.ID)
+            price = item.item.price
             text = formatAmount(price.price, 3, 3, 9, currency=True) if price.price else ""
-            if price.failed: text += " (!)"
+            if price.failed:
+                text += " (!)"
             colItem.SetText(text)
 
             display.SetItem(colItem)
 
-
-        sMkt.waitForPrice(mod.item, callback)
+        sPrice.getPrices([mod.item], callback, True)
 
     def getImageId(self, mod):
         return -1
 
     def getToolTip(self, mod):
         return self.name
+
 
 Price.register()

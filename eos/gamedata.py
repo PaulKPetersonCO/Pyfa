@@ -18,17 +18,21 @@
 # ===============================================================================
 
 import re
-import traceback
 
 from sqlalchemy.orm import reconstructor
 
 import eos.db
 from eqBase import EqBase
+from eos.saveddata.price import Price as types_Price
 
 try:
     from collections import OrderedDict
 except ImportError:
     from utils.compat import OrderedDict
+
+from logbook import Logger
+
+pyfalog = Logger(__name__)
 
 
 class Effect(EqBase):
@@ -63,6 +67,8 @@ class Effect(EqBase):
         """
         if not self.__generated:
             self.__generateHandler()
+
+        pyfalog.debug("Generating effect: {0} ({1}) [runTime: {2}]", self.name, self.effectID, self.runTime)
 
         return self.__handler
 
@@ -138,7 +144,7 @@ class Effect(EqBase):
     @property
     def isImplemented(self):
         """
-        Wether this effect is implemented in code or not,
+        Whether this effect is implemented in code or not,
         unimplemented effects simply do nothing at all when run
         """
         return self.handler != effectDummy
@@ -154,38 +160,39 @@ class Effect(EqBase):
         Grab the handler, type and runTime from the effect code if it exists,
         if it doesn't, set dummy values and add a dummy handler
         """
+
+        pyfalog.debug("Generate effect handler for {}".format(self.name))
+
         try:
             self.__effectModule = effectModule = __import__('eos.effects.' + self.handlerName, fromlist=True)
-            try:
-                self.__handler = getattr(effectModule, "handler")
-            except AttributeError:
-                print "effect {} exists, but no handler".format(self.handlerName)
-                raise
-
-            try:
-                self.__runTime = getattr(effectModule, "runTime") or "normal"
-            except AttributeError:
-                self.__runTime = "normal"
-
-            try:
-                self.__activeByDefault = getattr(effectModule, "activeByDefault")
-            except AttributeError:
-                self.__activeByDefault = True
-
-            try:
-                t = getattr(effectModule, "type")
-            except AttributeError:
-                t = None
+            self.__handler = getattr(effectModule, "handler", effectDummy)
+            self.__runTime = getattr(effectModule, "runTime", "normal")
+            self.__activeByDefault = getattr(effectModule, "activeByDefault", True)
+            t = getattr(effectModule, "type", None)
 
             t = t if isinstance(t, tuple) or t is None else (t,)
             self.__type = t
-        except (ImportError, AttributeError) as e:
+        except (ImportError) as e:
+            # Effect probably doesn't exist, so create a dummy effect and flag it with a warning.
             self.__handler = effectDummy
             self.__runTime = "normal"
             self.__activeByDefault = True
             self.__type = None
+            pyfalog.debug("ImportError generating handler: {0}", e)
+        except (AttributeError) as e:
+            # Effect probably exists but there is an issue with it.  Turn it into a dummy effect so we can continue, but flag it with an error.
+            self.__handler = effectDummy
+            self.__runTime = "normal"
+            self.__activeByDefault = True
+            self.__type = None
+            pyfalog.error("AttributeError generating handler: {0}", e)
         except Exception as e:
-            traceback.print_exc(e)
+            self.__handler = effectDummy
+            self.__runTime = "normal"
+            self.__activeByDefault = True
+            self.__type = None
+            pyfalog.critical("Exception generating handler:")
+            pyfalog.critical(e)
 
         self.__generated = True
 
@@ -231,10 +238,12 @@ class Item(EqBase):
     def init(self):
         self.__race = None
         self.__requiredSkills = None
+        self.__requiredFor = None
         self.__moved = False
         self.__offensive = None
         self.__assistive = None
         self.__overrides = None
+        self.__price = None
 
     @property
     def attributes(self):
@@ -243,9 +252,11 @@ class Item(EqBase):
 
         return self.__attributes
 
-    def getAttribute(self, key):
+    def getAttribute(self, key, default=None):
         if key in self.attributes:
             return self.attributes[key].value
+        else:
+            return default
 
     def isType(self, type):
         for effect in self.effects.itervalues():
@@ -280,35 +291,51 @@ class Item(EqBase):
         eos.db.saveddata_session.delete(override)
         eos.db.commit()
 
+    srqIDMap = {182: 277, 183: 278, 184: 279, 1285: 1286, 1289: 1287, 1290: 1288}
+
     @property
     def requiredSkills(self):
         if self.__requiredSkills is None:
-            # This import should be here to make sure it's fully initialized
-            from eos import db
             requiredSkills = OrderedDict()
             self.__requiredSkills = requiredSkills
             # Map containing attribute IDs we may need for required skills
             # { requiredSkillX : requiredSkillXLevel }
-            srqIDMap = {182: 277, 183: 278, 184: 279, 1285: 1286, 1289: 1287, 1290: 1288}
-            combinedAttrIDs = set(srqIDMap.iterkeys()).union(set(srqIDMap.itervalues()))
+            combinedAttrIDs = set(self.srqIDMap.iterkeys()).union(set(self.srqIDMap.itervalues()))
             # Map containing result of the request
             # { attributeID : attributeValue }
             skillAttrs = {}
             # Get relevant attribute values from db (required skill IDs and levels) for our item
-            for attrInfo in db.directAttributeRequest((self.ID,), tuple(combinedAttrIDs)):
+            for attrInfo in eos.db.directAttributeRequest((self.ID,), tuple(combinedAttrIDs)):
                 attrID = attrInfo[1]
                 attrVal = attrInfo[2]
                 skillAttrs[attrID] = attrVal
             # Go through all attributeID pairs
-            for srqIDAtrr, srqLvlAttr in srqIDMap.iteritems():
+            for srqIDAtrr, srqLvlAttr in self.srqIDMap.iteritems():
                 # Check if we have both in returned result
                 if srqIDAtrr in skillAttrs and srqLvlAttr in skillAttrs:
                     skillID = int(skillAttrs[srqIDAtrr])
                     skillLvl = skillAttrs[srqLvlAttr]
                     # Fetch item from database and fill map
-                    item = db.getItem(skillID)
+                    item = eos.db.getItem(skillID)
                     requiredSkills[item] = skillLvl
         return self.__requiredSkills
+
+    @property
+    def requiredFor(self):
+        if self.__requiredFor is None:
+            self.__requiredFor = dict()
+
+            # Map containing attribute IDs we may need for required skills
+
+            # Get relevant attribute values from db (required skill IDs and levels) for our item
+            q = eos.db.getRequiredFor(self.ID, self.srqIDMap)
+
+            for itemID, lvl in q:
+                # Fetch item from database and fill map
+                item = eos.db.getItem(itemID)
+                self.__requiredFor[item] = lvl
+
+        return self.__requiredFor
 
     factionMap = {
         500001: "caldari",
@@ -339,18 +366,20 @@ class Item(EqBase):
             # thus keep old mechanism for now
             except KeyError:
                 # Define race map
-                map = {1: "caldari",
-                       2: "minmatar",
-                       4: "amarr",
-                       5: "sansha",  # Caldari + Amarr
-                       6: "blood",  # Minmatar + Amarr
-                       8: "gallente",
-                       9: "guristas",  # Caldari + Gallente
-                       10: "angelserp",  # Minmatar + Gallente, final race depends on the order of skills
-                       12: "sisters",  # Amarr + Gallente
-                       16: "jove",
-                       32: "sansha",  # Incrusion Sansha
-                       128: "ore"}
+                map = {
+                    1  : "caldari",
+                    2  : "minmatar",
+                    4  : "amarr",
+                    5  : "sansha",  # Caldari + Amarr
+                    6  : "blood",  # Minmatar + Amarr
+                    8  : "gallente",
+                    9  : "guristas",  # Caldari + Gallente
+                    10 : "angelserp",  # Minmatar + Gallente, final race depends on the order of skills
+                    12 : "sisters",  # Amarr + Gallente
+                    16 : "jove",
+                    32 : "sansha",  # Incrusion Sansha
+                    128: "ore"
+                }
                 # Race is None by default
                 race = None
                 # Check primary and secondary required skills' races
@@ -378,7 +407,7 @@ class Item(EqBase):
             assistive = False
             # Go through all effects and find first assistive
             for effect in self.effects.itervalues():
-                if effect.info.isAssistance is True:
+                if effect.isAssistance is True:
                     # If we find one, stop and mark item as assistive
                     assistive = True
                     break
@@ -393,7 +422,7 @@ class Item(EqBase):
             offensive = False
             # Go through all effects and find first offensive
             for effect in self.effects.itervalues():
-                if effect.info.isOffensive is True:
+                if effect.isOffensive is True:
                     # If we find one, stop and mark item as offensive
                     offensive = True
                     break
@@ -418,9 +447,30 @@ class Item(EqBase):
 
         return False
 
+    @property
+    def price(self):
+
+        # todo: use `from sqlalchemy import inspect` instead (mac-deprecated doesn't have inspect(), was imp[lemented in 0.8)
+        if self.__price is not None and getattr(self.__price, '_sa_instance_state', None) and self.__price._sa_instance_state.deleted:
+            pyfalog.debug("Price data for {} was deleted (probably from a cache reset), resetting object".format(self.ID))
+            self.__price = None
+
+        if self.__price is None:
+            db_price = eos.db.getPrice(self.ID)
+            # do not yet have a price in the database for this item, create one
+            if db_price is None:
+                pyfalog.debug("Creating a price for {}".format(self.ID))
+                self.__price = types_Price(self.ID)
+                eos.db.add(self.__price)
+                eos.db.commit()
+            else:
+                self.__price = db_price
+
+        return self.__price
+
     def __repr__(self):
-        return "Item(ID={}, name={}) at {}".format(
-            self.ID, self.name, hex(id(self))
+        return u"Item(ID={}, name={}) at {}".format(
+                self.ID, self.name, hex(id(self))
         )
 
 
@@ -428,7 +478,7 @@ class MetaData(EqBase):
     pass
 
 
-class EffectInfo(EqBase):
+class ItemEffect(EqBase):
     pass
 
 
@@ -444,6 +494,25 @@ class Category(EqBase):
     pass
 
 
+class AlphaClone(EqBase):
+    @reconstructor
+    def init(self):
+        self.skillCache = {}
+
+        for x in self.skills:
+            self.skillCache[x.typeID] = x
+
+    def getSkillLevel(self, skill):
+        if skill.item.ID in self.skillCache:
+            return self.skillCache[skill.item.ID].level
+        else:
+            return None
+
+
+class AlphaCloneSkill(EqBase):
+    pass
+
+
 class Group(EqBase):
     pass
 
@@ -455,7 +524,7 @@ class Icon(EqBase):
 class MarketGroup(EqBase):
     def __repr__(self):
         return u"MarketGroup(ID={}, name={}, parent={}) at {}".format(
-            self.ID, self.name, getattr(self.parent, "name", None), self.name, hex(id(self))
+                self.ID, self.name, getattr(self.parent, "name", None), self.name, hex(id(self))
         ).encode('utf8')
 
 

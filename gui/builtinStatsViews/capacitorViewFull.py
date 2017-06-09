@@ -1,4 +1,4 @@
-#===============================================================================
+# =============================================================================
 # Copyright (C) 2010 Diego Duclos
 #
 # This file is part of pyfa.
@@ -15,24 +15,27 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with pyfa.  If not, see <http://www.gnu.org/licenses/>.
-#===============================================================================
+# =============================================================================
 
+# noinspection PyPackageRequirements
 import wx
 from gui.statsView import StatsView
-from gui import builtinStatsViews
 from gui.bitmapLoader import BitmapLoader
 from gui.utils.numberFormatter import formatAmount
 
+
 class CapacitorViewFull(StatsView):
     name = "capacitorViewFull"
+
     def __init__(self, parent):
         StatsView.__init__(self)
         self.parent = parent
+
     def getHeaderText(self, fit):
         return "Capacitor"
 
     def getTextExtentW(self, text):
-        width, height = self.parent.GetTextExtent( text )
+        width, height = self.parent.GetTextExtent(text)
         return width
 
     def populatePanel(self, contentPanel, headerPanel):
@@ -104,12 +107,17 @@ class CapacitorViewFull(StatsView):
         chargeSizer.Add(lbl, 0, wx.ALIGN_CENTER)
         chargeSizer.Add(wx.StaticText(parent, wx.ID_ANY, " GJ/s"), 0, wx.ALIGN_CENTER)
 
-
     def refreshPanel(self, fit):
-        #If we did anything intresting, we'd update our labels to reflect the new fit's stats here
-        stats= (("label%sCapacitorCapacity", lambda: fit.ship.getModifiedItemAttr("capacitorCapacity"), 3, 0, 9),
-                ("label%sCapacitorRecharge", lambda: fit.capRecharge, 3, 0, 0),
-                ("label%sCapacitorDischarge", lambda: fit.capUsed, 3, 0, 0))
+        # If we did anything intresting, we'd update our labels to reflect the new fit's stats here
+        stats = (
+            ("label%sCapacitorCapacity", lambda: fit.ship.getModifiedItemAttr("capacitorCapacity"), 3, 0, 9),
+            ("label%sCapacitorRecharge", lambda: fit.capRecharge, 3, 0, 0),
+            ("label%sCapacitorDischarge", lambda: fit.capUsed, 3, 0, 0),
+        )
+        if fit:
+            neut_resist = fit.ship.getModifiedItemAttr("energyWarfareResistance", 0)
+        else:
+            neut_resist = 0
 
         panel = "Full"
         for labelName, value, prec, lowest, highest in stats:
@@ -123,12 +131,18 @@ class CapacitorViewFull(StatsView):
                 label.SetLabel(formatAmount(value, prec, lowest, highest))
                 label.SetToolTip(wx.ToolTip("%.1f" % value))
 
+            if labelName == "label%sCapacitorDischarge":
+                if neut_resist:
+                    neut_resist = 100 - (neut_resist * 100)
+                label_tooltip = "Neut Resistance: {0:.0f}%".format(neut_resist)
+                label.SetToolTip(wx.ToolTip(label_tooltip))
+
         capState = fit.capState if fit is not None else 0
         capStable = fit.capStable if fit is not None else False
         lblNameTime = "label%sCapacitorTime"
         lblNameState = "label%sCapacitorState"
-        if isinstance(capState, tuple):
-            t = "%.1f%%-%.1f%%" % capState
+        if isinstance(capState, tuple) and len(capState) >= 2:
+            t = ("{0}%-{1}%", capState[0], capState[1])
             s = ""
         else:
             if capStable:
@@ -146,5 +160,6 @@ class CapacitorViewFull(StatsView):
 
         self.panel.Layout()
         self.headerPanel.Layout()
+
 
 CapacitorViewFull.register()

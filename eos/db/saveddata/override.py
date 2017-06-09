@@ -17,15 +17,19 @@
 # along with eos.  If not, see <http://www.gnu.org/licenses/>.
 # ===============================================================================
 
-from sqlalchemy import Table, Column, Integer, Float
+from sqlalchemy import Table, Column, Integer, Float, DateTime
 from sqlalchemy.orm import mapper
+import datetime
 
 from eos.db import saveddata_meta
-from eos.types import Override
+from eos.saveddata.override import Override
 
 overrides_table = Table("overrides", saveddata_meta,
                         Column("itemID", Integer, primary_key=True, index=True),
                         Column("attrID", Integer, primary_key=True, index=True),
-                        Column("value", Float, nullable=False))
+                        Column("value", Float, nullable=False),
+                        Column("created", DateTime, nullable=True, default=datetime.datetime.now),
+                        Column("modified", DateTime, nullable=True, onupdate=datetime.datetime.now)
+                        )
 
 mapper(Override, overrides_table)

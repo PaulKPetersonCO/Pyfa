@@ -1,4 +1,4 @@
-#===============================================================================
+# =============================================================================
 # Copyright (C) 2010 Diego Duclos
 #
 # This file is part of pyfa.
@@ -15,13 +15,19 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with pyfa.  If not, see <http://www.gnu.org/licenses/>.
-#===============================================================================
+# =============================================================================
 
+# noinspection PyPackageRequirements
 import wx
-import service
 from gui.bitmapLoader import BitmapLoader
 import gui.globalEvents as GE
 import gui.mainFrame
+from service.character import Character
+from service.fit import Fit
+from logbook import Logger
+
+pyfalog = Logger(__name__)
+
 
 class CharacterSelection(wx.Panel):
     def __init__(self, parent):
@@ -42,9 +48,10 @@ class CharacterSelection(wx.Panel):
         self.refreshCharacterList()
 
         self.cleanSkills = BitmapLoader.getBitmap("skill_big", "gui")
-        self.redSkills   = BitmapLoader.getBitmap("skillRed_big", "gui")
+        self.redSkills = BitmapLoader.getBitmap("skillRed_big", "gui")
         self.greenSkills = BitmapLoader.getBitmap("skillGreen_big", "gui")
-        self.refresh     = BitmapLoader.getBitmap("refresh", "gui")
+        self.refresh = BitmapLoader.getBitmap("refresh", "gui")
+        self.needsSkills = False
 
         self.btnRefresh = wx.BitmapButton(self, wx.ID_ANY, self.refresh)
         size = self.btnRefresh.GetSize()
@@ -62,13 +69,51 @@ class CharacterSelection(wx.Panel):
         self.skillReqsStaticBitmap.SetBitmap(self.cleanSkills)
         mainSizer.Add(self.skillReqsStaticBitmap, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT | wx.LEFT, 3)
 
+        self.skillReqsStaticBitmap.Bind(wx.EVT_RIGHT_UP, self.OnContextMenu)
+
         self.Bind(wx.EVT_CHOICE, self.charChanged)
         self.mainFrame.Bind(GE.CHAR_LIST_UPDATED, self.refreshCharacterList)
         self.mainFrame.Bind(GE.FIT_CHANGED, self.fitChanged)
 
-        self.SetMinSize(wx.Size(25,-1))
+        self.SetMinSize(wx.Size(25, -1))
 
         self.charChoice.Enable(False)
+
+    def OnContextMenu(self, event):
+        sFit = Fit.getInstance()
+        fit = sFit.getFit(self.mainFrame.getActiveFit())
+
+        if not fit or not self.needsSkills:
+            return
+
+        pos = wx.GetMousePosition()
+        pos = self.ScreenToClient(pos)
+
+        menu = wx.Menu()
+
+        grantItem = menu.Append(wx.ID_ANY, "Grant Missing Skills")
+        self.Bind(wx.EVT_MENU, self.grantMissingSkills, grantItem)
+
+        self.PopupMenu(menu, pos)
+
+        event.Skip()
+
+    def grantMissingSkills(self, evt):
+        charID = self.getActiveCharacter()
+        sChar = Character.getInstance()
+
+        skillsMap = {}
+        for item, stuff in self.reqs.iteritems():
+            for things in stuff.values():
+                if things[1] not in skillsMap:
+                    skillsMap[things[1]] = things[0]
+                elif things[0] > skillsMap[things[1]]:
+                    skillsMap[things[1]] = things[0]
+
+        for skillID, level in skillsMap.iteritems():
+            sChar.changeLevel(charID, skillID, level, ifHigher=True)
+
+        self.refreshCharacterList()
 
     def getActiveCharacter(self):
         selection = self.charChoice.GetCurrentSelection()
@@ -76,11 +121,11 @@ class CharacterSelection(wx.Panel):
 
     def refreshCharacterList(self, event=None):
         choice = self.charChoice
-        sChar = service.Character.getInstance()
+        sChar = Character.getInstance()
         activeChar = self.getActiveCharacter()
 
         choice.Clear()
-        charList = sChar.getCharacterList()
+        charList = sorted(sChar.getCharacterList(), key=lambda c: (not c.ro, c.name))
         picked = False
 
         for char in charList:
@@ -94,7 +139,7 @@ class CharacterSelection(wx.Panel):
             charID = sChar.all5ID()
             self.selectChar(charID)
             fitID = self.mainFrame.getActiveFit()
-            sFit = service.Fit.getInstance()
+            sFit = Fit.getInstance()
             sFit.changeChar(fitID, charID)
 
         choice.Append(u"\u2015 Open Character Editor \u2015", -1)
@@ -104,20 +149,29 @@ class CharacterSelection(wx.Panel):
             event.Skip()
 
     def refreshApi(self, event):
-        sChar = service.Character.getInstance()
+        self.btnRefresh.Enable(False)
+        sChar = Character.getInstance()
         ID, key, charName, chars = sChar.getApiDetails(self.getActiveCharacter())
         if charName:
-            try:
-                sChar.apiFetch(self.getActiveCharacter(), charName)
-            except:
-                # can we do a popup, notifying user of API error?
-                pass
-        self.refreshCharacterList()
+            sChar.apiFetch(self.getActiveCharacter(), charName, self.refreshAPICallback)
+
+    def refreshAPICallback(self, e=None):
+        self.btnRefresh.Enable(True)
+        if e is None:
+            self.refreshCharacterList()
+        else:
+            exc_type, exc_obj, exc_trace = e
+            pyfalog.warn("Error fetching API information for character")
+            pyfalog.warn(exc_obj)
+
+            wx.MessageBox(
+                "Error fetching API information, please check your API details in the character editor and try again later",
+                "Error", wx.ICON_ERROR | wx.STAY_ON_TOP)
 
     def charChanged(self, event):
         fitID = self.mainFrame.getActiveFit()
         charID = self.getActiveCharacter()
-        sChar = service.Character.getInstance()
+        sChar = Character.getInstance()
 
         if charID == -1:
             # revert to previous character
@@ -129,7 +183,7 @@ class CharacterSelection(wx.Panel):
         else:
             self.btnRefresh.Enable(False)
 
-        sFit = service.Fit.getInstance()
+        sFit = Fit.getInstance()
         sFit.changeChar(fitID, charID)
         self.charCache = self.charChoice.GetCurrentSelection()
         wx.PostEvent(self.mainFrame, GE.FitChanged(fitID=fitID))
@@ -137,57 +191,64 @@ class CharacterSelection(wx.Panel):
     def selectChar(self, charID):
         choice = self.charChoice
         numItems = len(choice.GetItems())
-        for i in xrange(numItems):
-            id = choice.GetClientData(i)
-            if id == charID:
+        for i in range(numItems):
+            id_ = choice.GetClientData(i)
+            if id_ == charID:
                 choice.SetSelection(i)
                 return True
 
         return False
 
     def fitChanged(self, event):
-        self.charChoice.Enable(event.fitID != None)
+        """
+        When fit is changed, or new fit is selected
+        """
+        self.charChoice.Enable(event.fitID is not None)
         choice = self.charChoice
-        sFit = service.Fit.getInstance()
+        sFit = Fit.getInstance()
         currCharID = choice.GetClientData(choice.GetCurrentSelection())
         fit = sFit.getFit(event.fitID)
         newCharID = fit.character.ID if fit is not None else None
+
         if event.fitID is None:
             self.skillReqsStaticBitmap.SetBitmap(self.cleanSkills)
             self.skillReqsStaticBitmap.SetToolTipString("No active fit")
         else:
-            sCharacter = service.Character.getInstance()
-            reqs = sCharacter.checkRequirements(fit)
-            sCharacter.skillReqsDict = {'charname':fit.character.name, 'skills':[]}
-            if len(reqs) == 0:
+            sCharacter = Character.getInstance()
+            self.reqs = sCharacter.checkRequirements(fit)
+
+            sCharacter.skillReqsDict = {'charname': fit.character.name, 'skills': []}
+            if len(self.reqs) == 0:
+                self.needsSkills = False
                 tip = "All skill prerequisites have been met"
                 self.skillReqsStaticBitmap.SetBitmap(self.greenSkills)
             else:
-                tip  = "Skills required:\n"
+                self.needsSkills = True
+                tip = "Skills required:\n"
                 condensed = sFit.serviceFittingOptions["compactSkills"]
                 if condensed:
-                    dict = self._buildSkillsTooltipCondensed(reqs, skillsMap = {})
-                    for key in sorted(dict):
-                        tip += "%s: %d\n" % (key, dict[key])
+                    dict_ = self._buildSkillsTooltipCondensed(self.reqs, skillsMap={})
+                    for key in sorted(dict_):
+                        tip += "%s: %d\n" % (key, dict_[key])
                 else:
-                    tip += self._buildSkillsTooltip(reqs)
+                    tip += self._buildSkillsTooltip(self.reqs)
                 self.skillReqsStaticBitmap.SetBitmap(self.redSkills)
             self.skillReqsStaticBitmap.SetToolTipString(tip.strip())
 
-        if newCharID == None:
-            sChar = service.Character.getInstance()
+        if newCharID is None:
+            sChar = Character.getInstance()
             self.selectChar(sChar.all5ID())
 
         elif currCharID != newCharID:
             self.selectChar(newCharID)
-            self.charChanged(None)
-
+            if not fit.calculated:
+                self.charChanged(None)
 
         event.Skip()
 
-    def _buildSkillsTooltip(self, reqs, currItem = "", tabulationLevel = 0):
+    def _buildSkillsTooltip(self, reqs, currItem="", tabulationLevel=0):
         tip = ""
-        sCharacter = service.Character.getInstance()
+        sCharacter = Character.getInstance()
 
         if tabulationLevel == 0:
             for item, subReqs in reqs.iteritems():
@@ -197,11 +258,11 @@ class CharacterSelection(wx.Panel):
             for name, info in reqs.iteritems():
                 level, ID, more = info
                 sCharacter.skillReqsDict['skills'].append({
-                    'item' : currItem,
-                    'skillID' : ID,
-                    'skill' : name,
-                    'level' : level,
-                    'indent' : tabulationLevel
+                    'item': currItem,
+                    'skillID': ID,
+                    'skill': name,
+                    'level': level,
+                    'indent': tabulationLevel,
                 })
 
                 tip += "%s%s: %d\n" % ("    " * tabulationLevel, name, level)
@@ -209,8 +270,11 @@ class CharacterSelection(wx.Panel):
 
         return tip
 
-    def _buildSkillsTooltipCondensed(self, reqs, currItem = "", tabulationLevel = 0, skillsMap = {}):
-        sCharacter = service.Character.getInstance()
+    def _buildSkillsTooltipCondensed(self, reqs, currItem="", tabulationLevel=0, skillsMap=None):
+        if skillsMap is None:
+            skillsMap = {}
+
+        sCharacter = Character.getInstance()
 
         if tabulationLevel == 0:
             for item, subReqs in reqs.iteritems():
@@ -220,11 +284,11 @@ class CharacterSelection(wx.Panel):
             for name, info in reqs.iteritems():
                 level, ID, more = info
                 sCharacter.skillReqsDict['skills'].append({
-                    'item' : currItem,
-                    'skillID' : ID,
-                    'skill' : name,
-                    'level' : level,
-                    'indent' : tabulationLevel
+                    'item': currItem,
+                    'skillID': ID,
+                    'skill': name,
+                    'level': level,
+                    'indent': tabulationLevel,
                 })
 
                 if name not in skillsMap:
@@ -232,6 +296,6 @@ class CharacterSelection(wx.Panel):
                 elif skillsMap[name] < level:
                     skillsMap[name] = level
 
-                skillMap = self._buildSkillsTooltipCondensed(more, currItem, tabulationLevel + 1, skillsMap)
+                skillsMap = self._buildSkillsTooltipCondensed(more, currItem, tabulationLevel + 1, skillsMap)
 
         return skillsMap
